@@ -38,6 +38,14 @@ export const HOLD_MIN_SEC = 0.25
 /** The share of a holdable note's value that the sustain is worth. */
 export const HOLD_SHARE = 1
 
+/**
+ * What a late save is worth, against a Good. It's a hit, and it keeps the
+ * combo — but it isn't a Good, so it doesn't score like one or count as one.
+ * Half applies to the whole note, sustain included: a late note is worth half
+ * throughout rather than half at the onset and full for the hold.
+ */
+export const LATE_SHARE = 0.5
+
 export const isHoldable = (note: GameNote): boolean => note.durSec >= HOLD_MIN_SEC
 
 /** Combo multiplier steps, Guitar Hero style: x1 up to 9, then x2, x3, x4. */
@@ -61,6 +69,13 @@ export function maxScoreFor(notes: GameNote[]): number {
 export interface Judgement {
   noteId: number
   verdict: Verdict
+  /**
+   * Claimed after the Good window, off a note that was still sounding. It
+   * counts as a hit and keeps the combo, but it isn't a Good: it scores half
+   * of one and is tallied on its own, because calling it a Good would hide
+   * the mistake the player just made and recovered from.
+   */
+  late?: boolean
   /** signed ms the press landed relative to the note (negative = early) */
   deltaMs: number
   lane: number
@@ -76,6 +91,8 @@ export interface Stats {
   /** notes long enough to need holding, and how much of them was held (0..1) */
   holdable: number
   heldFraction: number
+  /** hits claimed after the Good window, off a note that was still sounding */
+  late: number
   /** presses in a lane with no note anywhere near — counted, never scored */
   wrong: number
   score: number
@@ -98,6 +115,8 @@ export interface NoteState {
   holdable: boolean
   /** combo multiplier at the onset, reused for the hold bonus */
   mult: number
+  /** points the onset earned before the multiplier; the hold bonus matches it */
+  base: number
   /** song time the key currently holding this note went down */
   holdingFrom?: number
   /** seconds of the note actually held down */
@@ -108,7 +127,7 @@ export interface NoteState {
 
 const emptyStats = (): Stats => ({
   perfect: 0, great: 0, good: 0, miss: 0, wrong: 0,
-  holdable: 0, heldFraction: 0,
+  holdable: 0, heldFraction: 0, late: 0,
   score: 0, combo: 0, maxCombo: 0, meanErrorMs: 0, biasMs: 0,
 })
 
@@ -137,6 +156,7 @@ export class Judge {
       lane: laneOf(note),
       holdable: isHoldable(note),
       mult: 1,
+      base: 0,
       heldSec: 0,
       settled: false,
     }))
@@ -242,7 +262,7 @@ export class Judge {
     const deltaSec = t - s.note.timeSec
     const absMs = Math.abs(deltaSec) * 1000
     // Past the Good window means this was claimed late off a sounding note. It
-    // still counts, at the lowest grade.
+    // still counts, for half of what a Good would pay.
     const late = absMs > this.window.good
     const verdict: Verdict =
       absMs <= this.window.perfect ? 'perfect' : absMs <= this.window.great ? 'great' : 'good'
@@ -261,15 +281,21 @@ export class Judge {
       this.active.set(lane, s)
     }
 
+    s.base = late ? Math.round(VERDICT_POINTS.good * LATE_SHARE) : VERDICT_POINTS[verdict]
+
     this.stats.combo += 1
     this.stats.maxCombo = Math.max(this.stats.maxCombo, this.stats.combo)
-    this.stats.score += VERDICT_POINTS[verdict] * s.mult
-    this.stats[verdict] += 1
+    this.stats.score += s.base * s.mult
+    // A late save is its own category. Folding it into Goods would inflate the
+    // Good count and the accuracy with notes that were, in fact, fumbled.
+    if (!late) this.stats[verdict] += 1
     // Late claims are deliberate grabs at a sounding note, not evidence of
     // how your timing sits, so they stay out of the calibration figures —
     // otherwise one of them would swamp the average and the results screen
     // would advise a wildly wrong offset.
-    if (!late) {
+    if (late) {
+      this.stats.late += 1
+    } else {
       this.absErrorSum += absMs
       this.errorSum += deltaSec * 1000
       this.judged += 1
@@ -278,6 +304,7 @@ export class Judge {
     const j: Judgement & { verdict: HitVerdict } = {
       noteId: s.note.id,
       verdict,
+      late,
       deltaMs: Math.round(deltaSec * 1000),
       lane,
       atSec,
@@ -338,9 +365,7 @@ export class Judge {
     const held = Math.max(0, Math.min(1, s.heldSec / s.note.durSec))
     this.stats.holdable += 1
     this.heldSum += held
-    this.stats.score += Math.round(
-      VERDICT_POINTS[s.verdict as HitVerdict] * s.mult * HOLD_SHARE * held
-    )
+    this.stats.score += Math.round(s.base * s.mult * HOLD_SHARE * held)
   }
 
   /**
@@ -419,10 +444,11 @@ export type Grade = 'S' | 'A' | 'B' | 'C' | 'D' | 'F'
 
 export function grade(stats: Stats, totalNotes: number): Grade {
   if (totalNotes === 0) return 'F'
-  const hit = stats.perfect + stats.great + stats.good
+  const hit = stats.perfect + stats.great + stats.good + stats.late
   // Accuracy weights the verdicts rather than counting any hit as a hit, so a
-  // full-combo run of scrappy Goods lands a grade below a clean one.
-  const weighted = (stats.perfect + stats.great * 0.7 + stats.good * 0.4) / totalNotes
+  // full-combo run of scrappy Goods lands a grade below a clean one — and a run
+  // rescued by late saves lands below that again.
+  const weighted = accuracy(stats, totalNotes)
   if (hit === totalNotes && stats.wrong === 0 && weighted >= 0.95) return 'S'
   if (weighted >= 0.85) return 'A'
   if (weighted >= 0.7) return 'B'
@@ -434,4 +460,4 @@ export function grade(stats: Stats, totalNotes: number): Grade {
 export const accuracy = (stats: Stats, totalNotes: number): number =>
   totalNotes === 0
     ? 0
-    : (stats.perfect + stats.great * 0.7 + stats.good * 0.4) / totalNotes
+    : (stats.perfect + stats.great * 0.7 + stats.good * 0.4 + stats.late * 0.2) / totalNotes

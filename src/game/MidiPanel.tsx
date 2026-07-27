@@ -1,47 +1,30 @@
-// MIDI device connection. Nothing here runs at page load — the browser is only
-// asked for device access when the player clicks Connect, so no permission
-// prompt appears before they've chosen to use a controller.
+// MIDI device connection.
+//
+// Nothing here asks the browser for device access at page load — the prompt
+// only follows a click on Connect. Once the player has connected, though, the
+// choice is remembered and restored on the next visit; see midiPrefs.ts, which
+// owns both the persistence and the state this reads.
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Usb, AlertTriangle } from 'lucide-react'
-import {
-  enableMidi,
-  disableMidi,
-  getMidiDevices,
-  getMidiInput,
-  isMidiEnabled,
-  isMidiSupported,
-  setMidiInput,
-  subscribeMidiDevices,
-} from '../luting-core/midi'
-import type { MidiDevice } from '../luting-core/midi'
+import { isMidiSupported } from '../luting-core/midi'
+import { connectMidi, disconnectMidi, selectMidiInput, useMidi } from './midiPrefs'
 
 export function MidiPanel({ compact = false }: { compact?: boolean }) {
-  const [devices, setDevices] = useState<MidiDevice[]>([])
-  const [enabled, setEnabled] = useState(isMidiEnabled())
-  const [input, setInput] = useState(getMidiInput())
+  const { enabled, input, devices, restoring } = useMidi()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => subscribeMidiDevices(() => setDevices(getMidiDevices())), [])
 
   const connect = async () => {
     setBusy(true)
     setError(null)
     try {
-      setDevices(await enableMidi())
-      setEnabled(true)
+      await connectMidi()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach any MIDI devices.')
     } finally {
       setBusy(false)
     }
-  }
-
-  const disconnect = () => {
-    disableMidi()
-    setEnabled(false)
-    setDevices(getMidiDevices())
   }
 
   if (!isMidiSupported()) {
@@ -62,10 +45,7 @@ export function MidiPanel({ compact = false }: { compact?: boolean }) {
           <select
             value={input}
             aria-label="MIDI input device"
-            onChange={(e) => {
-              setInput(e.target.value)
-              setMidiInput(e.target.value)
-            }}
+            onChange={(e) => selectMidiInput(e.target.value)}
           >
             <option value="all">All devices</option>
             {devices.map((d) => (
@@ -74,7 +54,7 @@ export function MidiPanel({ compact = false }: { compact?: boolean }) {
               </option>
             ))}
           </select>
-          <button type="button" className="btn ghost" onClick={disconnect}>
+          <button type="button" className="btn ghost" onClick={disconnectMidi}>
             Disconnect
           </button>
           {hardware.length === 0 && (
@@ -82,8 +62,9 @@ export function MidiPanel({ compact = false }: { compact?: boolean }) {
           )}
         </>
       ) : (
-        <button type="button" className="btn" onClick={connect} disabled={busy}>
-          <Usb size={15} /> {busy ? 'Connecting…' : 'Connect a MIDI device'}
+        <button type="button" className="btn" onClick={connect} disabled={busy || restoring}>
+          <Usb size={15} />{' '}
+          {restoring ? 'Reconnecting…' : busy ? 'Connecting…' : 'Connect a MIDI device'}
         </button>
       )}
       {error && (

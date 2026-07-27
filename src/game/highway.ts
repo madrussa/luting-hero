@@ -125,6 +125,8 @@ export interface HighwayOptions {
   approachSec: number
   /** seconds per song beat, for the scrolling beat lines */
   beatSec: number
+  /** the Good window in seconds, so the highway knows when a note is overdue */
+  goodSec: number
   showGuides: boolean
   /**
    * How far the camera tilts down, in degrees. Steeper is more top-down, which
@@ -1056,6 +1058,10 @@ export class Highway {
     this.opts.approachSec = sec
   }
 
+  setGoodSec(sec: number): void {
+    this.opts.goodSec = sec
+  }
+
   /**
    * Tell the highway how big the combo is. Everything about the fire follows
    * from this one number.
@@ -1319,6 +1325,10 @@ export class Highway {
       const visibleLen = zNear - zFar
 
       const missAge = s.verdict === 'miss' ? t - (s.note.timeSec + 0.15) : -1
+      // Past its window and still untouched. A long note can be rescued from
+      // here, but until it is, it should look like what it is: a note you got
+      // wrong. It pulses rather than sitting flat, to read as still savable.
+      const overdue = !s.verdict && t > s.note.timeSec + this.opts.goodSec
       const holding = s.holdingFrom !== undefined
       // Only a *holdable* note can be dropped. A struck sixteenth has no
       // sustain to let go of, and dimming it the instant it was hit correctly
@@ -1335,6 +1345,8 @@ export class Highway {
       }
       if (missAge > 0) {
         intensity = Math.max(0.16, 1 - missAge / 0.6)
+      } else if (overdue) {
+        intensity = 0.7 + 0.3 * Math.sin(t * 12)
       } else if (dropped) {
         // let go early: the rest of the note is still there to be re-grabbed,
         // drawn dim so it's clear it isn't scoring
@@ -1355,7 +1367,7 @@ export class Highway {
       this.glow.setMatrixAt(n, this.dummy.matrix)
 
       this.scratch.copy(
-        s.verdict === 'miss' ? p.missed : lane.black ? p.noteB : p.noteA
+        s.verdict === 'miss' || overdue ? p.missed : lane.black ? p.noteB : p.noteA
       )
       // On a combo the notes come in burning. They keep their own hue and go
       // white at the core rather than turning amber, so the fire looks like the
@@ -1363,7 +1375,7 @@ export class Highway {
       // its own phase. Misses stay red — a dropped note shouldn't be dressed up
       // as part of the streak.
       let flicker = 1
-      if (fire > 0 && s.verdict !== 'miss') {
+      if (fire > 0 && s.verdict !== 'miss' && !overdue) {
         flicker = 1 + 0.18 * fire * Math.sin(t * 17 + s.note.id * 1.7)
         this.scratch.lerp(core!, 0.26 * fire * fire)
       }
@@ -1378,7 +1390,7 @@ export class Highway {
       // track, and the thing that makes fire look like fire is that it rises.
       // Two layers — a wide soft one behind a narrow bright one, flickering out
       // of phase — give it depth without a particle system per note.
-      if (fire > 0 && this.flames && s.verdict !== 'miss' && !dropped && flameCount < MAX_FLAMES) {
+      if (fire > 0 && this.flames && s.verdict !== 'miss' && !overdue && !dropped && flameCount < MAX_FLAMES) {
         const laneW = lane.width * WIDTH
         const hue = lane.black ? p.noteB : p.noteA
         const segments = Math.max(

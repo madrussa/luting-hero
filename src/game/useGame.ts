@@ -23,6 +23,7 @@ import type { BackingVoice } from './backing'
 import type { Chart, Track } from './chart'
 import { getSettings, hitWindowById, useSettings } from './settings'
 import { useBindings } from './bindings'
+import { getMidiTranspose, setMidiTranspose } from './midiPrefs'
 import { setSimActive } from '../luting-core/midi'
 import { loadBank } from '../luting-core/samples'
 
@@ -35,7 +36,7 @@ export type Phase = 'loading' | 'ready' | 'countdown' | 'playing' | 'paused' | '
  * and lighting the key you failed to reach turns a hard passage into a strobe.
  * The highway already shows misses in red, which is where the eye is anyway.
  */
-export type Flash = 'perfect' | 'great' | 'good' | 'wrong'
+export type Flash = 'perfect' | 'great' | 'good' | 'late' | 'wrong'
 export type FlashMap = Record<number, { verdict: Flash; seq: number }>
 
 /** How long a key's flash lasts; must outlast the CSS animation. */
@@ -95,7 +96,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
   const [hud, setHud] = useState<HudSnapshot>({
     stats: {
       perfect: 0, great: 0, good: 0, miss: 0, wrong: 0,
-      holdable: 0, heldFraction: 0,
+      holdable: 0, heldFraction: 0, late: 0,
       score: 0, combo: 0, maxCombo: 0, meanErrorMs: 0, biasMs: 0,
     },
     accuracy: 0,
@@ -104,7 +105,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
   })
   const [held, setHeld] = useState<Set<number>>(new Set())
   const [finalStats, setFinalStats] = useState<Stats | null>(null)
-  const [transposeSemis, setTransposeSemis] = useState(0)
+  const [transposeSemis, setTransposeSemis] = useState(getMidiTranspose)
   const [runId, setRunId] = useState(0)
   const [edgeInsetPct, setEdgeInsetPct] = useState(0)
   const [loading, setLoading] = useState({ done: 0, total: 0 })
@@ -365,7 +366,9 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
     // A press that claimed no note is a wrong note — but taking hold of a
     // sustain again is neither a hit nor a mistake, so it gets no flash at all.
     // Before the song is live there's nothing to be wrong about.
-    if (live && judged !== 'resumed') flashLane(ev.lane, judged ? judged.verdict : 'wrong')
+    if (live && judged !== 'resumed') {
+      flashLane(ev.lane, judged ? (judged.late ? 'late' : judged.verdict) : 'wrong')
+    }
 
     // A MIDI note outside the drawn keyboard has no key to light, so say so —
     // otherwise a controller sitting an octave off the part looks broken rather
@@ -410,6 +413,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
         theme: HIGHWAY_THEME,
         approachSec: s.approachSec,
         beatSec,
+        goodSec: hitWindowById(s.hitWindow).good / 1000,
         showGuides: s.guides,
         pitchDeg: s.cameraPitch,
       })
@@ -453,8 +457,9 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
 
   useEffect(() => {
     highwayRef.current?.setGuides(settings.guides)
+    highwayRef.current?.setGoodSec(hitWindowById(settings.hitWindow).good / 1000)
     transportRef.current?.setBackingEnabled(settings.backing)
-  }, [settings.guides, settings.backing])
+  }, [settings.guides, settings.backing, settings.hitWindow])
 
   // Re-tilting also re-fits the runway length, so the keyboard inset moves too.
   useEffect(() => {
@@ -497,6 +502,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
 
   const setTranspose = useCallback((semis: number) => {
     setTransposeSemis(semis)
+    setMidiTranspose(semis)
     routerRef.current?.setTranspose(semis)
   }, [])
 

@@ -211,6 +211,12 @@ only — **the instrument underneath stays live**, so before anything is scored
 you can play it, hear it, watch a MIDI controller light the keys it's actually
 sending, and shift the transpose until the octaves line up.
 
+**Settings** opens the full panel over the gate. The toolbar's cog is behind
+it, and the gate is exactly where the scroll speed, the hit window and the MIDI
+device want deciding — before the run, not after losing one to the wrong
+setting. While the panel is up the gate stops listening, so <kbd>Space</kbd>
+can't start the level out from under you.
+
 **Remap keys** turns the instrument into the mapping surface: click the key or
 pad you mean, then press the computer key you want on it. <kbd>Backspace</kbd>
 clears a binding, <kbd>Esc</kbd> cancels.
@@ -287,19 +293,36 @@ pasteable code, so a mapping can be shared with someone else.
 
 | | |
 | --- | --- |
-| **MIDI controller** | Chrome/Edge only (Web MIDI). Nothing is requested until you click Connect. Mirror ports are de-duplicated, and there's an octave transpose for short keyboards. |
+| **MIDI controller** | Chrome/Edge only (Web MIDI). Nothing is requested until you click Connect — after that it's remembered. Mirror ports are de-duplicated, and there's an octave transpose for short keyboards. |
 | **On-screen instrument** | Any browser. Click or drag across the keys for a glissando. |
 | **Computer keyboard** | Home row = white keys, the row above = black keys, the <kbd>Z</kbd>–<kbd>M</kbd> row = the octave below, <kbd>←</kbd>/<kbd>→</kbd> shift an octave. Drum pads bind left to right from <kbd>A</kbd>. All remappable. |
 
 Whatever you play it with, a key does three things: it lights while held, it
 flashes the verdict it earned — mint for Perfect, purple for Great, grey for
-Good, red for a note the chart didn't want — and it sounds, as the instrument
+Good, amber for a late save, red for a note the chart didn't want — and it
+sounds, as the instrument
 you chose to play, whether you were right or not. All three run off the same
 event, so a hardware controller behaves identically to a mouse click.
 
 Misses are deliberately *not* flashed on the keyboard: a miss is a note you
 didn't play, and lighting the key you failed to reach turns a hard passage into
 a strobe. The highway shows those in red instead.
+
+### The controller is remembered
+
+Connect once and it comes back on the next visit: `midiPrefs.ts` stores the
+fact that you connected, the port you chose and its transpose, and reconnects
+at startup. Two rules keep that honest. **A restore never raises a prompt** —
+it runs only when the permission is *already* granted, so a first visit still
+asks nothing, and Disconnect clears the flag rather than silently undoing
+itself next load. And the port is matched **by id, then by name**: ids are
+per-origin and usually stable, but a re-plug can churn them. A controller
+that's unplugged at load leaves you on "all devices", and is picked up the
+moment it appears.
+
+The transpose lives with the device rather than the song, because that's what
+it describes: where your controller's octave sits against the game's keyboard.
+Dialling it in once is enough.
 
 If a MIDI note lands outside the drawn keyboard — a controller sitting an octave
 below the part, or a pad for a drum this song's kit doesn't use — the strip
@@ -322,13 +345,20 @@ Notes shorter than 250 ms are struck, not held: a staccato sixteenth has no
 sustain to hold and demanding one would be unplayable, so those score in full at
 the onset. The results screen reports what share of your sustains you held.
 
-**A long note can be claimed late.** While it's still sounding, a press in its
-lane is obviously you playing it — counting that as a miss *and* a wrong note is
-wrong twice over. So a holdable note stays claimable for its whole duration, at
-the lowest grade, and keeps the combo. Landing late costs you anyway: the
-sustain is credited from the press, so grabbing a second-long note 400 ms in
-earns 60% of its hold. Struck notes have no sustain to be late into, so they
-still hold to the Good window.
+**A long note can be claimed late**, and until you do it looks like a mistake.
+Once a note is past its Good window and still untouched it turns red and pulses
+— clearly wrong, but clearly still savable — and reverts the moment you strike
+it. While it's still sounding, a press in its lane is obviously you playing it,
+and counting that as a miss *and* a wrong note is wrong twice over. So a
+holdable note stays claimable for its whole duration and keeps the combo.
+Struck notes have no sustain to be late into, so they still hold to the Good
+window.
+
+A late save is its own verdict — the HUD says **Late**, not Good — and it is
+worth half of one, sustain included. It's on the results screen as its own
+tally and it weighs less than a Good in the accuracy. Landing late costs you
+twice over, in fact: the sustain is credited from the press, so grabbing a
+second-long note 400 ms in earns 60% of an already-halved hold.
 
 Late claims stay out of the calibration figures. They're deliberate grabs, not
 evidence of how your timing sits, and one of them would swamp the average and

@@ -176,6 +176,8 @@ export function GameScreen({ chart, track, songTitle, best, onQuit, onFinish }: 
           best={best}
           remapping={remapping}
           capturing={capturing}
+          settingsOpen={showSettings}
+          onSettings={() => setShowSettings(true)}
           onToggleRemap={() => {
             setRemapping((v) => !v)
             setCapturing(null)

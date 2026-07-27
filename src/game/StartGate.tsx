@@ -12,7 +12,7 @@
 // key you want on it.
 
 import { useEffect, useRef } from 'react'
-import { Play, Keyboard, RotateCcw, Trophy } from 'lucide-react'
+import { Play, Keyboard, RotateCcw, Trophy, Settings as Cog } from 'lucide-react'
 import { isBindable, resetBindings, setBinding, useBindings } from './bindings'
 import type { BindingKind } from './bindings'
 import type { Track } from './chart'
@@ -27,8 +27,11 @@ interface Props {
   best?: SongBest
   remapping: boolean
   capturing: number | null
+  /** the settings overlay is up in front of the gate, so keys aren't ours */
+  settingsOpen: boolean
   onToggleRemap: () => void
   onCapture: (slot: number | null) => void
+  onSettings: () => void
   onStart: () => void
 }
 
@@ -39,8 +42,10 @@ export function StartGate({
   best,
   remapping,
   capturing,
+  settingsOpen,
   onToggleRemap,
   onCapture,
+  onSettings,
   onStart,
 }: Props) {
   useBindings() // re-render when a binding changes
@@ -48,9 +53,14 @@ export function StartGate({
 
   const capturingRef = useRef(capturing)
   capturingRef.current = capturing
+  const settingsRef = useRef(settingsOpen)
+  settingsRef.current = settingsOpen
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Hands off while settings are open: Space belongs to whatever has focus
+      // in there, and it must not start the run out from under them.
+      if (settingsRef.current) return
       const slot = capturingRef.current
       if (slot !== null) {
         // Capture mode swallows everything, so Space can't start the level out
@@ -128,6 +138,12 @@ export function StartGate({
           </button>
           <button type="button" className="btn ghost" onClick={onToggleRemap}>
             <Keyboard size={15} /> {remapping ? 'Done mapping' : 'Remap keys'}
+          </button>
+          {/* The toolbar's cog is behind the gate, and this is exactly where
+              you want the speed, the hit window and the MIDI device: before
+              the run, not after losing one to the wrong setting. */}
+          <button type="button" className="btn ghost" onClick={onSettings}>
+            <Cog size={15} /> Settings
           </button>
           {remapping && (
             <button type="button" className="btn ghost" onClick={() => resetBindings(kind)}>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Judge, comboMultiplier, grade, VERDICT_POINTS } from './judge'
+import { Judge, accuracy, comboMultiplier, grade, VERDICT_POINTS } from './judge'
 import type { GameNote, Track } from './chart'
 
 const HARSH = { id: 't', label: 'test', hint: '', perfect: 20, great: 50, good: 100 }
@@ -166,7 +166,7 @@ describe('scoring', () => {
 describe('grade', () => {
   const stats = (p: number, g: number, o: number, m: number, wrong = 0) => ({
     perfect: p, great: g, good: o, miss: m, wrong,
-    holdable: 0, heldFraction: 0,
+    holdable: 0, heldFraction: 0, late: 0,
     score: 0, combo: 0, maxCombo: 0, meanErrorMs: 0, biasMs: 0,
   })
 
@@ -292,6 +292,48 @@ describe('sustains', () => {
 describe('claiming a long note late', () => {
   const longJudge = (dur = 1) =>
     new Judge(track([[1, 60]], dur), (n) => n.midi ?? -1, HARSH, 0)
+
+  it('marks the judgement late, so the HUD can say so', () => {
+    // Calling it a Good on screen would hide the mistake the player just made
+    // and recovered from.
+    const j = longJudge()
+    expect(hit(j.press(60, 1.4))?.late).toBe(true)
+    expect(hit(j.press(60, 1.4))).toBeNull() // already claimed
+  })
+
+  it('does not mark an in-window hit late', () => {
+    const j = longJudge()
+    expect(hit(j.press(60, 1.02))?.late).toBe(false)
+  })
+
+  it('counts late saves separately, not as Goods', () => {
+    const j = longJudge()
+    j.press(60, 1.4)
+    expect(j.getStats().late).toBe(1)
+    expect(j.getStats().good).toBe(0)
+  })
+
+  it('pays half a Good for the save, and half for its sustain', () => {
+    const j = longJudge()
+    j.press(60, 1.4)
+    expect(j.getStats().score).toBe(VERDICT_POINTS.good / 2)
+    j.expire(2.1) // held the 0.6 s that was left
+    expect(j.getStats().score).toBe(VERDICT_POINTS.good / 2 + Math.round(VERDICT_POINTS.good / 2 * 0.6))
+  })
+
+  it('weights a late save below a Good in the accuracy', () => {
+    const late = longJudge()
+    late.press(60, 1.4)
+    const good = longJudge()
+    good.press(60, 1.06) // 60 ms out: a Good
+    expect(accuracy(late.getStats(), 1)).toBeLessThan(accuracy(good.getStats(), 1))
+  })
+
+  it('does not count an in-window hit as late', () => {
+    const j = longJudge()
+    j.press(60, 1.02)
+    expect(j.getStats().late).toBe(0)
+  })
 
   it('counts a press well past the window while the note still sounds', () => {
     // HARSH's Good window is 100 ms; this is 400 ms late, but the note runs a

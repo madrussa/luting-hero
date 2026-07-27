@@ -76,6 +76,15 @@ export function Results({ stats, track, songTitle, onRetry, onChangeInstrument, 
           <dt>Wrong notes</dt>
           <dd>{stats.wrong}</dd>
         </div>
+        {stats.late > 0 && (
+          <div className="late">
+            <dt>Late saves</dt>
+            <dd>
+              {stats.late}
+              <em> at half value</em>
+            </dd>
+          </div>
+        )}
         {stats.holdable > 0 && (
           <div className="held">
             <dt>Sustains held</dt>

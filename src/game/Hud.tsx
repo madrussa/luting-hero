@@ -79,8 +79,8 @@ export function Hud({ hud, track, songTitle, band, toolbar }: Props) {
         {last && (
           // Keyed on the note so a repeat of the same verdict replays the
           // animation instead of sitting there looking frozen.
-          <div key={last.noteId} className={`verdict ${last.verdict}`}>
-            <span className="verdict-word">{last.verdict}</span>
+          <div key={last.noteId} className={`verdict ${last.late ? 'late' : last.verdict}`}>
+            <span className="verdict-word">{last.late ? 'late' : last.verdict}</span>
             {last.verdict !== 'miss' && (
               <span className="verdict-delta">
                 {last.deltaMs > 0 ? `+${last.deltaMs}` : last.deltaMs} ms

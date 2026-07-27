@@ -821,6 +821,9 @@ input[type='range'] {
 .verdict.good .verdict-word {
   color: var(--text-dim);
 }
+.verdict.late .verdict-word {
+  color: var(--warn);
+}
 .verdict.miss .verdict-word {
   color: var(--danger);
 }
@@ -1025,6 +1028,10 @@ input[type='range'] {
 .key-flash.good {
   background: linear-gradient(0deg, var(--text-dim), transparent 85%);
   box-shadow: inset 0 -3px 0 var(--text-dim);
+}
+.key-flash.late {
+  background: linear-gradient(0deg, var(--warn), transparent 85%);
+  box-shadow: inset 0 -3px 0 var(--warn);
 }
 .key-flash.wrong {
   background: linear-gradient(0deg, var(--danger), transparent 85%);
@@ -1580,6 +1587,10 @@ input[type='range'] {
 }
 .tally .miss dd {
   color: var(--danger);
+}
+.tally .late dd,
+.tally .held dd {
+  color: var(--warn);
 }
 .calibrate {
   max-width: 460px;
