@@ -287,3 +287,61 @@ describe('sustains', () => {
     expect(j.getStats().score).toBe(j.maxScore())
   })
 })
+
+
+describe('claiming a long note late', () => {
+  const longJudge = (dur = 1) =>
+    new Judge(track([[1, 60]], dur), (n) => n.midi ?? -1, HARSH, 0)
+
+  it('counts a press well past the window while the note still sounds', () => {
+    // HARSH's Good window is 100 ms; this is 400 ms late, but the note runs a
+    // full second so the player is plainly playing it.
+    const j = longJudge()
+    expect(hit(j.press(60, 1.4))?.verdict).toBe('good')
+    expect(j.getStats().wrong).toBe(0)
+    expect(j.getStats().combo).toBe(1)
+  })
+
+  it('credits only the sustain left after a late grab', () => {
+    const j = longJudge()
+    j.press(60, 1.4)
+    j.expire(2.1)
+    expect(j.getStats().heldFraction).toBeCloseTo(0.6, 5)
+  })
+
+  it('does not miss a long note while it can still be claimed', () => {
+    const j = longJudge()
+    j.expire(1.5) // half way through the note
+    expect(j.getStats().miss).toBe(0)
+    expect(hit(j.press(60, 1.5))?.verdict).toBe('good')
+  })
+
+  it('misses it once the note has finished', () => {
+    const j = longJudge()
+    j.expire(2.2)
+    expect(j.getStats().miss).toBe(1)
+    expect(j.press(60, 2.3)).toBeNull()
+  })
+
+  it('still holds short notes to the Good window', () => {
+    // A struck note has no sustain to be late into.
+    const j = judgeFor([[1, 60]]) // 0.2s
+    expect(j.press(60, 1.4)).toBeNull()
+    expect(j.getStats().wrong).toBe(1)
+  })
+
+  it('keeps a late claim out of the calibration figures', () => {
+    // One deliberate late grab would otherwise swamp the average and have the
+    // results screen advise a wildly wrong offset.
+    const j = new Judge(track([[1, 60], [4, 62]], 1), (n) => n.midi ?? -1, HARSH, 0)
+    j.press(60, 1.02) // 20 ms late, real timing data
+    j.press(62, 4.5) // 500 ms late, a grab
+    expect(j.getStats().biasMs).toBe(20)
+  })
+
+  it('prefers a note in the window over an older one still sounding', () => {
+    // A long note in a lane must not swallow the press aimed at the next note.
+    const j = new Judge(track([[1, 60], [2, 60]], 1), (n) => n.midi ?? -1, HARSH, 0)
+    expect(hit(j.press(60, 2.01))?.noteId).toBe(1)
+  })
+})

@@ -148,6 +148,20 @@ export class Judge {
     for (const lane of this.byLane.keys()) this.cursor.set(lane, 0)
   }
 
+  /**
+   * How long after its onset a note can still be claimed.
+   *
+   * For a struck note that's just the Good window. For a *held* one it's the
+   * whole note: while a second-long note is still sounding, a press in its lane
+   * is obviously you playing it, only late — counting that as a miss plus a
+   * wrong note is wrong twice over. Landing late costs you anyway, because the
+   * sustain is credited from the press.
+   */
+  private claimEnd(s: NoteState): number {
+    const goodSec = this.window.good / 1000
+    return s.note.timeSec + (s.holdable ? Math.max(goodSec, s.note.durSec) : goodSec)
+  }
+
   /** The live combo, without building a whole Stats object for it. */
   get combo(): number {
     return this.stats.combo
@@ -203,11 +217,23 @@ export class Judge {
         bestIdx = list[k]
       }
     }
+    // Nothing landed in the Good window. Before calling it a wrong note, look
+    // for a long one still sounding in this lane and take that instead — first
+    // one already struck (the player grabbing it again), then one not yet
+    // claimed at all (a late but unmistakable hit).
     if (bestIdx === -1) {
-      // Nothing new to hit — but a note already struck in this lane may still
-      // be sounding, in which case this press is the player taking hold of it
-      // again rather than playing something wrong.
       if (this.resume(lane, t)) return 'resumed'
+      for (let k = this.cursor.get(lane) ?? 0; k < list.length; k++) {
+        const s = this.states[list[k]]
+        if (s.note.timeSec > t) break
+        if (s.verdict || !s.holdable) continue
+        if (t < this.claimEnd(s)) {
+          bestIdx = list[k]
+          break
+        }
+      }
+    }
+    if (bestIdx === -1) {
       this.registerWrong()
       return null
     }
@@ -215,6 +241,9 @@ export class Judge {
     const s = this.states[bestIdx]
     const deltaSec = t - s.note.timeSec
     const absMs = Math.abs(deltaSec) * 1000
+    // Past the Good window means this was claimed late off a sounding note. It
+    // still counts, at the lowest grade.
+    const late = absMs > this.window.good
     const verdict: Verdict =
       absMs <= this.window.perfect ? 'perfect' : absMs <= this.window.great ? 'great' : 'good'
 
@@ -236,9 +265,15 @@ export class Judge {
     this.stats.maxCombo = Math.max(this.stats.maxCombo, this.stats.combo)
     this.stats.score += VERDICT_POINTS[verdict] * s.mult
     this.stats[verdict] += 1
-    this.absErrorSum += absMs
-    this.errorSum += deltaSec * 1000
-    this.judged += 1
+    // Late claims are deliberate grabs at a sounding note, not evidence of
+    // how your timing sits, so they stay out of the calibration figures —
+    // otherwise one of them would swamp the average and the results screen
+    // would advise a wildly wrong offset.
+    if (!late) {
+      this.absErrorSum += absMs
+      this.errorSum += deltaSec * 1000
+      this.judged += 1
+    }
 
     const j: Judgement & { verdict: HitVerdict } = {
       noteId: s.note.id,
@@ -315,7 +350,6 @@ export class Judge {
    */
   expire(atSec: number) {
     const t = atSec - this.offsetSec
-    const goodSec = this.window.good / 1000
 
     // Pay out any sustain whose note has now ended.
     for (const [lane, s] of [...this.active]) {
@@ -329,14 +363,13 @@ export class Judge {
       }
     }
     for (const [lane, list] of this.byLane) {
-      let k = this.cursor.get(lane) ?? 0
-      while (k < list.length) {
-        const s = this.states[list[k]]
-        if (s.verdict) {
-          k++
-          continue
-        }
-        if (t - s.note.timeSec <= goodSec) break
+      // Scan every note whose onset has passed rather than stopping at the
+      // first unresolved one: claim windows now vary by note length, so a short
+      // note can expire while a long one before it is still claimable.
+      for (let j = this.cursor.get(lane) ?? 0; j < list.length; j++) {
+        const s = this.states[list[j]]
+        if (s.note.timeSec > t) break
+        if (s.verdict || t <= this.claimEnd(s)) continue
         s.verdict = 'miss'
         this.stats.miss += 1
         this.stats.combo = 0
@@ -345,10 +378,12 @@ export class Judge {
           verdict: 'miss',
           deltaMs: 0,
           lane,
-          atSec: s.note.timeSec + goodSec,
+          atSec: this.claimEnd(s),
         })
-        k++
       }
+      // The cursor only steps over notes that are fully resolved.
+      let k = this.cursor.get(lane) ?? 0
+      while (k < list.length && this.states[list[k]].verdict) k++
       this.cursor.set(lane, k)
     }
   }

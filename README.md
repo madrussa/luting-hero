@@ -322,9 +322,21 @@ Notes shorter than 250 ms are struck, not held: a staccato sixteenth has no
 sustain to hold and demanding one would be unplayable, so those score in full at
 the onset. The results screen reports what share of your sustains you held.
 
-The hold is measured from the note's own onset, not from your press — hitting
-15 ms early shouldn't buy 15 ms of extra sustain, and hitting late shouldn't
-cost any.
+**A long note can be claimed late.** While it's still sounding, a press in its
+lane is obviously you playing it — counting that as a miss *and* a wrong note is
+wrong twice over. So a holdable note stays claimable for its whole duration, at
+the lowest grade, and keeps the combo. Landing late costs you anyway: the
+sustain is credited from the press, so grabbing a second-long note 400 ms in
+earns 60% of its hold. Struck notes have no sustain to be late into, so they
+still hold to the Good window.
+
+Late claims stay out of the calibration figures. They're deliberate grabs, not
+evidence of how your timing sits, and one of them would swamp the average and
+have the results screen advise a wildly wrong offset.
+
+The hold itself is measured from the note's own onset, not from your press —
+hitting 15 ms early shouldn't buy 15 ms of extra sustain, and hitting late
+shouldn't cost any beyond the time actually lost.
 
 ## Calibration
 
