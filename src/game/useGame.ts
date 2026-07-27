@@ -95,6 +95,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
   const [hud, setHud] = useState<HudSnapshot>({
     stats: {
       perfect: 0, great: 0, good: 0, miss: 0, wrong: 0,
+      holdable: 0, heldFraction: 0,
       score: 0, combo: 0, maxCombo: 0, meanErrorMs: 0, biasMs: 0,
     },
     accuracy: 0,
@@ -257,6 +258,9 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
 
     const finish = () => {
       if (phaseRef.current === 'finished') return
+      // Settle any sustain still running, and mark anything untouched as
+      // missed, so the final stats account for the whole chart.
+      judgeRef.current?.expire(Number.POSITIVE_INFINITY)
       setPhase('finished')
       setFinalStats(judgeRef.current!.getStats())
       transport.voices.allOff()
@@ -344,6 +348,10 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
     const s = settingsRef.current
 
     if (ev.kind === 'off') {
+      // Letting go ends the sustain as well as the sound.
+      if (phaseRef.current === 'playing' || phaseRef.current === 'countdown') {
+        judge.release(ev.lane, transport.now() + transport.audioLatencySec)
+      }
       if (s.hitSound) transport.voices.noteOff(track.instrument, { midi: ev.midi, drum: ev.drum })
       return
     }
@@ -354,9 +362,10 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
     const at = transport.now() + transport.audioLatencySec
     const live = phaseRef.current === 'playing' || phaseRef.current === 'countdown'
     const judged = live ? judge.press(ev.lane, at) : null
-    // A press that claimed no note is a wrong note. Before the song is live
-    // there's nothing to be wrong about, so those keys just light up plainly.
-    if (live) flashLane(ev.lane, judged ? judged.verdict : 'wrong')
+    // A press that claimed no note is a wrong note — but taking hold of a
+    // sustain again is neither a hit nor a mistake, so it gets no flash at all.
+    // Before the song is live there's nothing to be wrong about.
+    if (live && judged !== 'resumed') flashLane(ev.lane, judged ? judged.verdict : 'wrong')
 
     // A MIDI note outside the drawn keyboard has no key to light, so say so —
     // otherwise a controller sitting an octave off the part looks broken rather

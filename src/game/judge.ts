@@ -27,17 +27,34 @@ export const VERDICT_POINTS: Record<Exclude<Verdict, 'miss'>, number> = {
   good: 100,
 }
 
+/**
+ * Notes shorter than this are struck, not held — a staccato sixteenth has no
+ * sustain to hold and demanding one would be unplayable. Anything longer is
+ * worth its onset points again for being held to the end, so a full-value note
+ * means hitting it *and* keeping it down.
+ */
+export const HOLD_MIN_SEC = 0.25
+
+/** The share of a holdable note's value that the sustain is worth. */
+export const HOLD_SHARE = 1
+
+export const isHoldable = (note: GameNote): boolean => note.durSec >= HOLD_MIN_SEC
+
 /** Combo multiplier steps, Guitar Hero style: x1 up to 9, then x2, x3, x4. */
 export const comboMultiplier = (combo: number): number => Math.min(4, 1 + Math.floor(combo / 10))
 
 /**
- * The score for a flawless run of `noteCount` notes: every note Perfect with
- * the combo never dropping, so the multiplier climbs 1→4 over the first thirty
- * notes and stays there.
+ * The score for a flawless run: every note Perfect, every sustain held to the
+ * end, and the combo never dropping — so the multiplier climbs 1→4 over the
+ * first thirty notes and stays there. Holdable notes count double, which is
+ * what makes "hold it for full points" true rather than just encouraged.
  */
-export function maxScoreFor(noteCount: number): number {
+export function maxScoreFor(notes: GameNote[]): number {
   let total = 0
-  for (let i = 0; i < noteCount; i++) total += VERDICT_POINTS.perfect * comboMultiplier(i)
+  notes.forEach((note, i) => {
+    const base = VERDICT_POINTS.perfect * comboMultiplier(i)
+    total += isHoldable(note) ? base * (1 + HOLD_SHARE) : base
+  })
   return total
 }
 
@@ -56,6 +73,9 @@ export interface Stats {
   great: number
   good: number
   miss: number
+  /** notes long enough to need holding, and how much of them was held (0..1) */
+  holdable: number
+  heldFraction: number
   /** presses in a lane with no note anywhere near — counted, never scored */
   wrong: number
   score: number
@@ -74,10 +94,21 @@ export interface NoteState {
   verdict?: Verdict
   /** song time it was hit, for the highway's hit flash */
   hitAtSec?: number
+  /** long enough that the sustain is scored */
+  holdable: boolean
+  /** combo multiplier at the onset, reused for the hold bonus */
+  mult: number
+  /** song time the key currently holding this note went down */
+  holdingFrom?: number
+  /** seconds of the note actually held down */
+  heldSec: number
+  /** the sustain is over and its bonus has been paid */
+  settled: boolean
 }
 
 const emptyStats = (): Stats => ({
   perfect: 0, great: 0, good: 0, miss: 0, wrong: 0,
+  holdable: 0, heldFraction: 0,
   score: 0, combo: 0, maxCombo: 0, meanErrorMs: 0, biasMs: 0,
 })
 
@@ -101,7 +132,14 @@ export class Judge {
   constructor(track: Track, laneOf: (note: GameNote) => number, window: HitWindow, offsetMs: number) {
     this.window = window
     this.offsetSec = offsetMs / 1000
-    this.states = track.notes.map((note) => ({ note, lane: laneOf(note) }))
+    this.states = track.notes.map((note) => ({
+      note,
+      lane: laneOf(note),
+      holdable: isHoldable(note),
+      mult: 1,
+      heldSec: 0,
+      settled: false,
+    }))
     this.states.forEach((s, i) => {
       const list = this.byLane.get(s.lane)
       if (list) list.push(i)
@@ -118,6 +156,7 @@ export class Judge {
   getStats(): Stats {
     return {
       ...this.stats,
+      heldFraction: this.stats.holdable ? this.heldSum / this.stats.holdable : 0,
       meanErrorMs: this.judged ? Math.round(this.absErrorSum / this.judged) : 0,
       biasMs: this.judged ? Math.round(this.errorSum / this.judged) : 0,
     }
@@ -125,7 +164,7 @@ export class Judge {
 
   /** Score attainable on this chart, for the results screen's "x / y". */
   maxScore(): number {
-    return maxScoreFor(this.states.length)
+    return maxScoreFor(this.states.map((s) => s.note))
   }
 
   drainJudgements(): Judgement[] {
@@ -136,10 +175,13 @@ export class Judge {
   }
 
   /**
-   * Judge a press in `lane` at `atSec`. Returns the judgement, or null when
-   * there was nothing to hit (which the caller shows as a wrong note).
+   * Judge a press in `lane` at `atSec`.
+   *
+   * Returns the judgement for a new note, the string `'resumed'` when the press
+   * picked a sustain back up — letting go and grabbing a long note again must
+   * not read as a wrong note — or null when there was nothing there at all.
    */
-  press(lane: number, atSec: number): (Judgement & { verdict: HitVerdict }) | null {
+  press(lane: number, atSec: number): (Judgement & { verdict: HitVerdict }) | 'resumed' | null {
     const t = atSec - this.offsetSec
     const list = this.byLane.get(lane)
     if (!list) {
@@ -162,6 +204,10 @@ export class Judge {
       }
     }
     if (bestIdx === -1) {
+      // Nothing new to hit — but a note already struck in this lane may still
+      // be sounding, in which case this press is the player taking hold of it
+      // again rather than playing something wrong.
+      if (this.resume(lane, t)) return 'resumed'
       this.registerWrong()
       return null
     }
@@ -174,10 +220,21 @@ export class Judge {
 
     s.verdict = verdict
     s.hitAtSec = atSec
+    s.mult = comboMultiplier(this.stats.combo)
+    // The sustain starts from the note's own onset, not from the press: being
+    // 30 ms early shouldn't earn extra hold, and being 30 ms late shouldn't
+    // cost any.
+    if (s.holdable) {
+      // A previous sustain in this lane is over the moment a new note starts.
+      const prev = this.active.get(lane)
+      if (prev && prev !== s && !prev.settled) this.settle(prev, t)
+      s.holdingFrom = Math.max(t, s.note.timeSec)
+      this.active.set(lane, s)
+    }
 
     this.stats.combo += 1
     this.stats.maxCombo = Math.max(this.stats.maxCombo, this.stats.combo)
-    this.stats.score += VERDICT_POINTS[verdict] * comboMultiplier(this.stats.combo - 1)
+    this.stats.score += VERDICT_POINTS[verdict] * s.mult
     this.stats[verdict] += 1
     this.absErrorSum += absMs
     this.errorSum += deltaSec * 1000
@@ -196,12 +253,81 @@ export class Judge {
   }
 
   /**
-   * Expire notes whose Good window has closed. Call every frame with the
-   * current song time; each newly missed note breaks the combo.
+   * The note this lane is currently sustaining, if any.
+   *
+   * Held in its own map rather than found by scanning, because the lane cursor
+   * has already stepped past the note by then — it exists to find the next
+   * *unjudged* onset, and a sustaining note is by definition judged.
+   */
+  private sustaining(lane: number, t: number): NoteState | null {
+    const s = this.active.get(lane)
+    if (!s) return null
+    if (t >= s.note.timeSec + s.note.durSec) return null
+    return s
+  }
+
+  private resume(lane: number, t: number): boolean {
+    const s = this.sustaining(lane, t)
+    if (!s || s.holdingFrom !== undefined) return false
+    s.holdingFrom = t
+    return true
+  }
+
+  /**
+   * A key came up. Bank whatever was held; the note isn't settled yet, so
+   * grabbing it again before it ends carries on adding to the same total.
+   */
+  release(lane: number, atSec: number): void {
+    const t = atSec - this.offsetSec
+    const s = this.sustaining(lane, t)
+    if (!s || s.holdingFrom === undefined) return
+    this.bank(s, t)
+  }
+
+  /** Add the time held so far to a note's total and stop the clock on it. */
+  private bank(s: NoteState, t: number): void {
+    if (s.holdingFrom === undefined) return
+    const end = s.note.timeSec + s.note.durSec
+    s.heldSec += Math.max(0, Math.min(t, end) - s.holdingFrom)
+    s.holdingFrom = undefined
+  }
+
+  /**
+   * The sustain is over: bank any hold still running and pay the bonus, in
+   * proportion to how much of the note was actually held.
+   */
+  private settle(s: NoteState, t: number): void {
+    this.bank(s, t)
+    s.settled = true
+    if (!s.holdable || !s.verdict || s.verdict === 'miss') return
+    const held = Math.max(0, Math.min(1, s.heldSec / s.note.durSec))
+    this.stats.holdable += 1
+    this.heldSum += held
+    this.stats.score += Math.round(
+      VERDICT_POINTS[s.verdict as HitVerdict] * s.mult * HOLD_SHARE * held
+    )
+  }
+
+  /**
+   * Expire notes whose Good window has closed, and settle sustains that have
+   * run out. Call every frame with the current song time; each newly missed
+   * note breaks the combo.
    */
   expire(atSec: number) {
     const t = atSec - this.offsetSec
     const goodSec = this.window.good / 1000
+
+    // Pay out any sustain whose note has now ended.
+    for (const [lane, s] of [...this.active]) {
+      if (s.settled) {
+        this.active.delete(lane)
+        continue
+      }
+      if (t >= s.note.timeSec + s.note.durSec) {
+        this.settle(s, t)
+        this.active.delete(lane)
+      }
+    }
     for (const [lane, list] of this.byLane) {
       let k = this.cursor.get(lane) ?? 0
       while (k < list.length) {
@@ -245,6 +371,10 @@ export class Judge {
     this.stats.wrong += 1
     this.stats.combo = 0
   }
+
+  private heldSum = 0
+  /** the note each lane is currently sustaining, keyed by lane */
+  private readonly active = new Map<number, NoteState>()
 }
 
 // ---------------------------------------------------------------------------

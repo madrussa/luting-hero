@@ -5,13 +5,13 @@ import type { GameNote, Track } from './chart'
 const HARSH = { id: 't', label: 'test', hint: '', perfect: 20, great: 50, good: 100 }
 
 /** A melodic track whose lanes are simply the MIDI notes. */
-function track(notes: [time: number, midi: number][]): Track {
+function track(notes: [time: number, midi: number][], durSec = 0.2): Track {
   return {
     instrument: 'l',
     name: 'Lute',
     icon: '🪕',
     notes: notes.map(([timeSec, midi], id): GameNote => ({
-      id, timeSec, durSec: 0.2, midi, volume: 1, voice: 0,
+      id, timeSec, durSec, midi, volume: 1, voice: 0,
     })),
     voices: [0],
     isDrums: false,
@@ -26,18 +26,21 @@ function track(notes: [time: number, midi: number][]): Track {
 const judgeFor = (notes: [number, number][], offsetMs = 0) =>
   new Judge(track(notes), (n) => n.midi ?? -1, HARSH, offsetMs)
 
+/** press() can also return 'resumed'; these tests are about the hit case. */
+const hit = (r: ReturnType<Judge['press']>) => (r && r !== 'resumed' ? r : null)
+
 describe('Judge.press', () => {
   it('grades by how close the press was', () => {
     const j = judgeFor([[1, 60], [2, 60], [3, 60]])
-    expect(j.press(60, 1.005)?.verdict).toBe('perfect')
-    expect(j.press(60, 2.04)?.verdict).toBe('great')
-    expect(j.press(60, 3.09)?.verdict).toBe('good')
+    expect(hit(j.press(60, 1.005))?.verdict).toBe('perfect')
+    expect(hit(j.press(60, 2.04))?.verdict).toBe('great')
+    expect(hit(j.press(60, 3.09))?.verdict).toBe('good')
   })
 
   it('reports a signed delta: negative early, positive late', () => {
     const j = judgeFor([[1, 60], [2, 60]])
-    expect(j.press(60, 0.97)?.deltaMs).toBe(-30)
-    expect(j.press(60, 2.03)?.deltaMs).toBe(30)
+    expect(hit(j.press(60, 0.97))?.deltaMs).toBe(-30)
+    expect(hit(j.press(60, 2.03))?.deltaMs).toBe(30)
   })
 
   it('returns null and breaks the combo on a note that is not there', () => {
@@ -58,22 +61,22 @@ describe('Judge.press', () => {
   it('claims the nearest note, not merely the earliest in range', () => {
     // Two notes 60 ms apart, both inside the ±100 ms window of this press.
     const j = judgeFor([[1.0, 60], [1.06, 60]])
-    const first = j.press(60, 1.055)
+    const first = hit(j.press(60, 1.055))
     expect(first?.noteId).toBe(1) // the 1.06 note, 5 ms away — not the 1.0 one
-    const second = j.press(60, 1.001)
+    const second = hit(j.press(60, 1.001))
     expect(second?.noteId).toBe(0)
   })
 
   it('never judges the same note twice', () => {
     const j = judgeFor([[1, 60]])
-    expect(j.press(60, 1.0)).not.toBeNull()
+    expect(hit(j.press(60, 1.0))).not.toBeNull()
     expect(j.press(60, 1.01)).toBeNull()
     expect(j.getStats().perfect).toBe(1)
   })
 
   it('judges each note of a chord separately', () => {
     const j = judgeFor([[1, 60], [1, 64], [1, 67]])
-    for (const m of [60, 64, 67]) expect(j.press(m, 1.002)?.verdict).toBe('perfect')
+    for (const m of [60, 64, 67]) expect(hit(j.press(m, 1.002))?.verdict).toBe('perfect')
     expect(j.getStats().perfect).toBe(3)
     expect(j.getStats().combo).toBe(3)
   })
@@ -81,7 +84,7 @@ describe('Judge.press', () => {
   it('shifts every window by the calibration offset', () => {
     // +40 ms offset: a press 40 ms "late" by the clock is dead on the note.
     const j = judgeFor([[1, 60]], 40)
-    expect(j.press(60, 1.04)?.verdict).toBe('perfect')
+    expect(hit(j.press(60, 1.04))?.verdict).toBe('perfect')
   })
 })
 
@@ -99,7 +102,7 @@ describe('Judge.expire', () => {
     const j = judgeFor([[1, 60]])
     j.expire(1.05)
     expect(j.getStats().miss).toBe(0)
-    expect(j.press(60, 1.06)?.verdict).toBe('good')
+    expect(hit(j.press(60, 1.06))?.verdict).toBe('good')
   })
 
   it('emits one judgement per missed note', () => {
@@ -163,6 +166,7 @@ describe('scoring', () => {
 describe('grade', () => {
   const stats = (p: number, g: number, o: number, m: number, wrong = 0) => ({
     perfect: p, great: g, good: o, miss: m, wrong,
+    holdable: 0, heldFraction: 0,
     score: 0, combo: 0, maxCombo: 0, meanErrorMs: 0, biasMs: 0,
   })
 
@@ -183,5 +187,103 @@ describe('grade', () => {
   it('fails an empty run', () => {
     expect(grade(stats(0, 0, 0, 0), 0)).toBe('F')
     expect(grade(stats(0, 0, 0, 100), 100)).toBe('F')
+  })
+})
+
+
+describe('sustains', () => {
+  // 1-second notes: comfortably over HOLD_MIN_SEC, so they have to be held.
+  const heldJudge = (notes: [number, number][] = [[1, 60]]) =>
+    new Judge(track(notes, 1), (n) => n.midi ?? -1, HARSH, 0)
+
+  it('pays the onset immediately and the sustain when the note ends', () => {
+    const j = heldJudge()
+    j.press(60, 1)
+    // only the onset so far — the note is still sounding
+    expect(j.getStats().score).toBe(VERDICT_POINTS.perfect)
+    j.expire(2.1) // note ran 1..2, held throughout
+    expect(j.getStats().score).toBe(VERDICT_POINTS.perfect * 2)
+    expect(j.getStats().heldFraction).toBeCloseTo(1, 5)
+  })
+
+  it('pays less for letting go early', () => {
+    const j = heldJudge()
+    j.press(60, 1)
+    j.release(60, 1.5) // half of a 1s note
+    j.expire(2.1)
+    expect(j.getStats().heldFraction).toBeCloseTo(0.5, 5)
+    expect(j.getStats().score).toBe(VERDICT_POINTS.perfect * 1.5)
+  })
+
+  it('pays nothing extra for a note dropped at once', () => {
+    const j = heldJudge()
+    j.press(60, 1)
+    j.release(60, 1)
+    j.expire(2.1)
+    expect(j.getStats().heldFraction).toBe(0)
+    expect(j.getStats().score).toBe(VERDICT_POINTS.perfect)
+  })
+
+  it('lets a dropped sustain be picked back up', () => {
+    const j = heldJudge()
+    j.press(60, 1)
+    j.release(60, 1.25)
+    expect(j.press(60, 1.5)).toBe('resumed') // not a wrong note
+    j.expire(2.1)
+    // 0.25 before the drop plus 0.5 after picking it up again
+    expect(j.getStats().heldFraction).toBeCloseTo(0.75, 5)
+    expect(j.getStats().wrong).toBe(0)
+    expect(j.getStats().combo).toBe(1) // and the combo survives
+  })
+
+  it('does not credit holding past the end of the note', () => {
+    const j = heldJudge()
+    j.press(60, 1)
+    j.release(60, 9) // still down long after it finished
+    j.expire(9)
+    expect(j.getStats().heldFraction).toBeCloseTo(1, 5)
+  })
+
+  it('does not credit holding from before the onset', () => {
+    // Hitting early shouldn't buy extra sustain: the hold is measured from the
+    // note's own onset, so this is a full hold and no more.
+    const j = heldJudge()
+    j.press(60, 0.985) // 15 ms early — still a Perfect in this window
+    j.expire(2.1)
+    expect(j.getStats().heldFraction).toBeCloseTo(1, 5)
+    expect(j.getStats().score).toBe(VERDICT_POINTS.perfect * 2)
+  })
+
+  it('asks nothing of a note too short to hold', () => {
+    // The default fixture is 0.2s — under HOLD_MIN_SEC.
+    const j = judgeFor([[1, 60]])
+    j.press(60, 1)
+    j.expire(5)
+    expect(j.getStats().holdable).toBe(0)
+    expect(j.getStats().score).toBe(VERDICT_POINTS.perfect)
+  })
+
+  it('gives a missed note no sustain to hold', () => {
+    const j = heldJudge()
+    j.expire(5)
+    expect(j.getStats().miss).toBe(1)
+    expect(j.getStats().holdable).toBe(0)
+    expect(j.getStats().score).toBe(0)
+  })
+
+  it('a press with nothing sustaining is still a wrong note', () => {
+    const j = heldJudge()
+    expect(j.press(65, 1)).toBeNull()
+    expect(j.getStats().wrong).toBe(1)
+  })
+
+  it('maxScore counts every sustain as doubling its note', () => {
+    const notes: [number, number][] = Array.from({ length: 12 }, (_, i) => [i, 60])
+    const j = new Judge(track(notes, 1), (n) => n.midi ?? -1, HARSH, 0)
+    for (let i = 0; i < 12; i++) {
+      j.press(60, i)
+      j.expire(i + 1.001)
+    }
+    expect(j.getStats().score).toBe(j.maxScore())
   })
 })

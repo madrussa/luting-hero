@@ -51,7 +51,7 @@ export function Results({ stats, track, songTitle, onRetry, onChangeInstrument, 
 
       <div className="score-big">
         {stats.score.toLocaleString()}
-        <em> / {maxScoreFor(total).toLocaleString()}</em>
+        <em> / {maxScoreFor(track.notes).toLocaleString()}</em>
       </div>
       <div className="acc-big">{(acc * 100).toFixed(1)}% accuracy</div>
 
@@ -76,6 +76,15 @@ export function Results({ stats, track, songTitle, onRetry, onChangeInstrument, 
           <dt>Wrong notes</dt>
           <dd>{stats.wrong}</dd>
         </div>
+        {stats.holdable > 0 && (
+          <div className="held">
+            <dt>Sustains held</dt>
+            <dd>
+              {Math.round(stats.heldFraction * 100)}
+              <em>% of {stats.holdable}</em>
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Best combo</dt>
           <dd>

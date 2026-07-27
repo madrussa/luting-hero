@@ -305,8 +305,26 @@ If a MIDI note lands outside the drawn keyboard — a controller sitting an octa
 below the part, or a pad for a drum this song's kit doesn't use — the strip
 above the keys says so, rather than the note silently vanishing.
 
-Notes are judged on their onsets. Long notes are drawn at their true length and
-sustain while you hold them, but holding isn't separately scored.
+## Sustains
+
+A note isn't finished when you hit it. Striking it pays the onset; **holding it
+for its full length pays the same again**, in proportion to how much of it you
+actually held. So a full-value note means hitting it *and* keeping it down, and
+a perfect run's score assumes every sustain was held.
+
+The bar doesn't vanish when struck — the hit line eats it, so what's still on
+screen is exactly the sustain left to hold. Held notes read brighter; letting go
+early dims the remainder rather than removing it, because it's still there to be
+picked back up. Grabbing a sustain again carries on adding to the same total and
+is not a wrong note.
+
+Notes shorter than 250 ms are struck, not held: a staccato sixteenth has no
+sustain to hold and demanding one would be unplayable, so those score in full at
+the onset. The results screen reports what share of your sustains you held.
+
+The hold is measured from the note's own onset, not from your press — hitting
+15 ms early shouldn't buy 15 ms of extra sustain, and hitting late shouldn't
+cost any.
 
 ## Calibration
 

@@ -1299,9 +1299,7 @@ export class Highway {
       const lane = this.laneById.get(s.lane)
       if (!lane) continue
 
-      // A hit note pops and vanishes; no reason to keep drawing it after that.
       const hitAge = s.hitAtSec !== undefined ? t - s.hitAtSec : -1
-      if (hitAge > HIT_FLASH_SEC) continue
 
       // z runs -depth (just spawned) → 0 (on the hit line). The note's onset is
       // its leading edge and its duration trails away from the player, because
@@ -1310,24 +1308,48 @@ export class Highway {
       const lengthZ = this.opts.layout.isDrums
         ? DRUM_NOTE_LEN
         : Math.max(0.5, (s.note.durSec / approachSec) * this.depth)
+
+      // The hit line eats the bar rather than the bar vanishing when struck:
+      // the near end is pinned there once the onset has passed, so what's left
+      // on screen is exactly the sustain still to be held. Gone when the far
+      // end arrives.
+      const zFar = z - lengthZ
+      const zNear = Math.min(z, 0)
+      if (zFar >= 0) continue
+      const visibleLen = zNear - zFar
+
       const missAge = s.verdict === 'miss' ? t - (s.note.timeSec + 0.15) : -1
+      const holding = s.holdingFrom !== undefined
+      // Only a *holdable* note can be dropped. A struck sixteenth has no
+      // sustain to let go of, and dimming it the instant it was hit correctly
+      // would read as a mistake.
+      const dropped =
+        s.holdable && s.verdict !== undefined && s.verdict !== 'miss' && !holding && lead < 0
 
       let scale = 1
       let intensity = 1
-      if (hitAge >= 0) {
-        scale = 1 + hitAge * 4
-        intensity = Math.max(0, 1 - hitAge / HIT_FLASH_SEC)
-      } else if (missAge > 0) {
+      // A short pop at the moment of the hit, then back to normal — the bar
+      // stays, so the pop is punctuation rather than an exit.
+      if (hitAge >= 0 && hitAge < HIT_FLASH_SEC) {
+        scale = 1 + 0.5 * (1 - hitAge / HIT_FLASH_SEC)
+      }
+      if (missAge > 0) {
         intensity = Math.max(0.16, 1 - missAge / 0.6)
+      } else if (dropped) {
+        // let go early: the rest of the note is still there to be re-grabbed,
+        // drawn dim so it's clear it isn't scoring
+        intensity = 0.3
+      } else if (holding) {
+        intensity = 1.25
       }
 
       this.dummy.rotation.set(0, 0, 0)
       this.dummy.position.set(
         this.laneX(lane.center),
         NOTE_Y + (lane.black ? 0.05 : 0),
-        z - lengthZ / 2
+        zFar + visibleLen / 2
       )
-      this.dummy.scale.set(lane.width * WIDTH * 0.84 * scale, scale, lengthZ)
+      this.dummy.scale.set(lane.width * WIDTH * 0.84 * scale, scale, visibleLen)
       this.dummy.updateMatrix()
       this.notes.setMatrixAt(n, this.dummy.matrix)
       this.glow.setMatrixAt(n, this.dummy.matrix)
@@ -1356,17 +1378,17 @@ export class Highway {
       // track, and the thing that makes fire look like fire is that it rises.
       // Two layers — a wide soft one behind a narrow bright one, flickering out
       // of phase — give it depth without a particle system per note.
-      if (fire > 0 && this.flames && s.verdict !== 'miss' && hitAge < 0 && flameCount < MAX_FLAMES) {
+      if (fire > 0 && this.flames && s.verdict !== 'miss' && !dropped && flameCount < MAX_FLAMES) {
         const laneW = lane.width * WIDTH
         const hue = lane.black ? p.noteB : p.noteA
         const segments = Math.max(
           1,
-          Math.min(MAX_FLAMES_PER_NOTE, Math.round(lengthZ / FLAME_SPACING))
+          Math.min(MAX_FLAMES_PER_NOTE, Math.round(visibleLen / FLAME_SPACING))
         )
         for (let seg = 0; seg < segments && flameCount < MAX_FLAMES; seg++) {
           // spread evenly along the bar, from its far end to its near end
           const f01 = segments === 1 ? 0.5 : seg / (segments - 1)
-          const segZ = z - lengthZ * (1 - f01)
+          const segZ = zFar + visibleLen * f01
           // alternate a wide soft tongue with a narrow bright one so the run
           // has some variation instead of a row of identical flames
           const outer = seg % 2 === 0
