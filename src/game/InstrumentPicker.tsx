@@ -1,0 +1,225 @@
+// Choosing which instrument to play. Every track here is one instrument's
+// whole part, however many luting voices it was written across.
+
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square } from 'lucide-react'
+import type { SongRecord } from './songStore'
+import type { Chart, Track } from './chart'
+import { noteName } from './lanes'
+import { DRUM_SOUNDS } from '../luting-core/luting'
+import {
+  previewInstrument,
+  stopPlayback,
+  playLuting,
+  getActivePlaybackId,
+  subscribePlayback,
+} from '../luting-core/player'
+import { getPlaybackMode, loadBank } from '../luting-core/samples'
+import { updateSettings, useSettings } from './settings'
+import conducting from '../assets/conducting.webp'
+
+interface Props {
+  chart: Chart
+  songTitle: string
+  /** the raw luting, for previewing the whole arrangement */
+  songText: string
+  /** what we remember about this song; null until IndexedDB answers */
+  record: SongRecord | null
+  onBack: () => void
+  onPick: (track: Track) => void
+}
+
+/** playback id for the whole-song preview, so its button knows it's live */
+const PREVIEW_ID = 'song-preview'
+
+const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
+
+function Stars({ rating }: { rating: number }) {
+  return (
+    <span className="stars" title={`${rating} of 10`} aria-label={`Difficulty ${rating} of 10`}>
+      {Array.from({ length: 10 }, (_, i) => (
+        <i key={i} className={i < rating ? 'on' : ''} />
+      ))}
+    </span>
+  )
+}
+
+export function InstrumentPicker({ chart, songTitle, songText, record, onBack, onPick }: Props) {
+  const sorted = [...chart.tracks].sort((a, b) => a.difficulty.rating - b.difficulty.rating)
+  const { keyboard } = useSettings()
+
+  // Which instrument is being auditioned. In sample mode the preview waits for
+  // that instrument's pack, so this doubles as the spinner — and warms the pack
+  // the run is about to need.
+  const [busy, setBusy] = useState<string | null>(null)
+
+  // An audition or preview left running would play over the count-in.
+  useEffect(() => stopPlayback, [])
+
+  // The vendored engine allows one playback at a time, so a preview and an
+  // instrument audition naturally interrupt each other — which is what you
+  // want, and means one subscription covers both.
+  const activeId = useSyncExternalStore(subscribePlayback, getActivePlaybackId)
+  const previewing = activeId === PREVIEW_ID
+
+  const togglePreview = async () => {
+    if (previewing) return stopPlayback()
+    setBusy(PREVIEW_ID)
+    try {
+      // Warm the packs first so the preview doesn't open on the synth and
+      // change instrument under you a bar later.
+      if (getPlaybackMode() === 'quality') {
+        await Promise.all([...new Set(chart.allNotes.map((n) => n.instrument))].map(loadBank))
+      }
+      playLuting(songText, { id: PREVIEW_ID })
+    } finally {
+      setBusy((b) => (b === PREVIEW_ID ? null : b))
+    }
+  }
+
+  const audition = async (code: string) => {
+    setBusy(code)
+    try {
+      await previewInstrument(code)
+    } finally {
+      setBusy((b) => (b === code ? null : b))
+    }
+  }
+
+  return (
+    <div className="instrument-picker">
+      <div className="picker-head">
+        <button type="button" className="btn ghost" onClick={onBack}>
+          <ArrowLeft size={15} /> Songs
+        </button>
+        <h2>
+          {songTitle}
+          <span className="sub">
+            {chart.bpm} #lute · {mmss(chart.durationSec)} · {chart.allNotes.length.toLocaleString()} notes
+          </span>
+        </h2>
+        <button
+          type="button"
+          className={`btn ${previewing ? 'primary' : ''}`}
+          onClick={() => void togglePreview()}
+          disabled={busy === PREVIEW_ID}
+        >
+          {busy === PREVIEW_ID ? (
+            <Loader size={15} className="spin" />
+          ) : previewing ? (
+            <Square size={15} />
+          ) : (
+            <Play size={15} />
+          )}
+          {previewing ? 'Stop' : busy === PREVIEW_ID ? 'Loading…' : 'Preview song'}
+        </button>
+        <img src={conducting} alt="" className="picker-mascot" />
+      </div>
+
+      {/* Easy is the default: most parts touch a fraction of their range, and
+          the keys they never touch are only there to be missed. */}
+      <div className="mode-switch" role="radiogroup" aria-label="Keyboard">
+        {(
+          [
+            ['easy', 'Easy', 'only the keys the part plays'],
+            ['full', 'Hard', 'the full keyboard across its range'],
+          ] as const
+        ).map(([value, label, hint]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={keyboard === value}
+            className={`mode-option ${keyboard === value ? 'on' : ''}`}
+            onClick={() => updateSettings({ keyboard: value })}
+          >
+            <strong>{label}</strong>
+            <span>{hint}</span>
+          </button>
+        ))}
+      </div>
+
+      {chart.warnings.length > 0 && (
+        <ul className="warnings">
+          {chart.warnings.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      )}
+
+      <div className="track-grid">
+        {sorted.map((t) => {
+          const d = t.difficulty
+          return (
+            // A div wrapping two buttons, not one button: the audition control
+            // has to be independently clickable, and a button inside a button
+            // is invalid markup that browsers resolve however they like.
+            <div
+              key={t.instrument}
+              className={`track-card ${record?.lastInstrument === t.instrument ? 'last-played' : ''}`}
+            >
+              <button type="button" className="track-pick" onClick={() => onPick(t)}>
+              <span className="track-icon" aria-hidden="true">
+                {t.icon}
+              </span>
+              <span className="track-body">
+                <span className="track-name">
+                  {t.name}
+                  {t.voices.length > 1 && (
+                    <em className="merged-badge" title={`Luting voices ${t.voices.map((v) => v + 1).join(', ')} play this instrument and are merged into one part`}>
+                      <Layers size={11} /> {t.voices.length} voices
+                    </em>
+                  )}
+                </span>
+                <span className="track-diff">
+                  <Stars rating={d.rating} />
+                  <strong>{d.label}</strong>
+                </span>
+                <span className="track-meta">
+                  {t.notes.length.toLocaleString()} notes · {d.nps}/s avg, {d.peakNps}/s peak
+                  {d.maxChord > 1 && ` · up to ${d.maxChord} at once`}
+                </span>
+                {record?.best[t.instrument] && (
+                  <span className="track-best">
+                    <Trophy size={11} /> {record.best[t.instrument].score.toLocaleString()} ·{' '}
+                    {record.best[t.instrument].grade} ·{' '}
+                    {(record.best[t.instrument].accuracy * 100).toFixed(0)}%
+                  </span>
+                )}
+                <span className="track-range">
+                  {t.isDrums
+                    ? `${t.drums.length} kit piece${t.drums.length === 1 ? '' : 's'}: ${t.drums
+                        .slice(0, 4)
+                        .map((k) => DRUM_SOUNDS[k]?.name ?? k)
+                        .join(', ')}${t.drums.length > 4 ? '…' : ''}`
+                    : keyboard === 'easy'
+                      ? `${t.pitches.length} key${t.pitches.length === 1 ? '' : 's'} · ${noteName(t.lowMidi)}–${noteName(t.highMidi)}`
+                      : `${noteName(t.lowMidi)}–${noteName(t.highMidi)} · ${d.span} semitones`}
+                </span>
+              </span>
+                <span className="track-go" aria-hidden="true">
+                  <Play size={16} />
+                </span>
+              </button>
+              <button
+                type="button"
+                className={`track-audition ${busy === t.instrument ? 'busy' : ''}`}
+                aria-label={`Hear the ${t.name}`}
+                title={`Hear the ${t.name}`}
+                onClick={() => void audition(t.instrument)}
+              >
+                {busy === t.instrument ? <Loader size={15} /> : <Volume2 size={15} />}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      <p className="hint">
+        Everything you don’t pick keeps playing behind you. Where a luting spreads one
+        instrument over several voices — the only way its syntax can overlap notes — those
+        voices are merged back into a single part here, so you play all of it.
+      </p>
+    </div>
+  )
+}

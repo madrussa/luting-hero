@@ -1,0 +1,328 @@
+# Luting Hero
+
+A rhythm game for **lutings** — the compact music notation used by
+[luteboi.com](https://luteboi.com/). Add a luting, pick one of its instruments,
+and play that part yourself on a MIDI controller, an on-screen piano, or your
+computer keyboard while the rest of the song plays behind you.
+
+**No songs ship with the app.** You bring your own, and they stay in your
+browser. Nothing is uploaded anywhere.
+
+Sibling project to [Luting Studio](https://github.com/madrussa/luting-studio),
+whose parser, audio engine, sample packs, theme and mascot it shares.
+
+```sh
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # production build in dist/
+npm test
+```
+
+## How it plays
+
+- **Build a collection** — paste a luting (with a title and artist), drop
+  `.lute` files anywhere on the page, or import a collection zip. Every song in
+  the picker is really parsed, so the note counts and durations shown are the
+  real ones.
+- **Pick an instrument** — each one is rated 1–10 for difficulty from what it
+  actually asks of you. **Preview song** plays the whole arrangement, and the
+  speaker on each card auditions that instrument alone. Parts with fewer than
+  ten notes aren't offered: picking a two-note triangle is a minute of watching
+  someone else's song. They still play in the backing.
+- **Play it** — notes fall down a 3D highway onto the keyboard. Hit them as
+  they cross the line. Everything you didn't pick keeps playing behind you.
+
+## The design decisions worth knowing about
+
+### Voices are merged back into instruments
+
+A luting voice is strictly monophonic in time: the syntax can stack notes into a
+chord that shares one duration, but it cannot overlap two notes freely. That is
+a limitation of the notation, not of the music, so composers work around it by
+writing the same instrument across several voices.
+
+A chart has no such limit — it's just a bag of timed notes — so **every voice
+sharing an instrument code is merged into one track**. Pick "Lute" and you play
+all of the lute, however many voices it was spread over; the instrument picker
+shows a "4 voices" badge when that's happened. Two voices doubling the same
+pitch at the same instant collapse into one note, because you can only press the
+key once.
+
+### Lanes are pitches, not colours
+
+With the full note range available there's no honest way to compress a part onto
+five coloured buttons, so the highway is Synthesia-style: **a lane is a MIDI
+note**, and bars land on the key they belong to. That makes a hardware keyboard,
+the on-screen piano and the computer keys all mean the same thing. Drum tracks
+instead get one lane per kit piece the song actually uses, ordered as they sit on
+a kit, so the kick is always the leftmost pad.
+
+The keyboard is rounded out to whole octaves around the part's range, so a wide
+part gets a wide keyboard. `src/game/lanes.ts` is the single source of lane
+geometry — the 3D scene and the DOM instrument both read it, which is what keeps
+every key exactly under its lane at any window size.
+
+### The camera angle is the reaction-time control
+
+Perspective does not distribute time evenly. At the original 34° tilt, the first
+half of every note's approach was squeezed into **17% of the screen** — notes
+were an unreadable smudge near the horizon and then arrived in a rush. Steeper
+is flatter-looking but far more readable: 44° gives that first half 26% of the
+screen, 56° gives it 33%.
+
+So the tilt is a setting (**Camera angle**, default 44°), and the runway's depth
+is *derived* from it rather than fixed: `fitCamera` bisects for the depth that
+puts the far end of the approach just inside the top of the frame. That way the
+whole of `approachSec` is on screen at any angle, and none of it is wasted past
+the edge. Everything sized by depth is built one unit long and scaled, so
+re-tilting is a handful of scale assignments rather than a scene rebuild.
+
+Fog is keyed to the camera's distance from the end of the runway, not to the
+runway's length — those diverge sharply once depth is fitted, and a fog distance
+keyed to the length ate most of the highway at steep angles.
+
+### Stars
+
+A drifting starfield with a few larger, slower wisps, in a slab **below and
+beside** the highway rather than above it. Pitched 44° down there is no sky in
+frame at all — the floor fills it — but the floor is only ten units wide, so the
+wedges either side are open background. The stars that drift under the highway
+are hidden by the floor itself, which writes depth while they only test it. The
+result reads as a bridge over open space.
+
+### The band is visible, not just audible
+
+Everything you didn't pick plays behind you, and each of those instruments gets
+a **glowing wave running along its own side of the highway**, in its own colour
+(named in the HUD). The waves scroll toward you on *exactly the same time axis
+as the notes*: the wave at depth `z` shows that instrument's activity at the
+song time the notes arriving there will land on.
+
+That's the point of them. A section starting is a swell rolling in from the
+distance; a section stopping is the wave going flat well before the silence
+arrives. The arrangement becomes something you can read ahead, so the stretches
+where your own part rests stop feeling like the game has paused.
+
+Each wave is three vertex rows — a wash from the floor, a bright crest, a halo
+fading above it — so the glow comes from the geometry rather than a
+post-processing pass. Activity comes from a precomputed envelope per voice
+(`buildEnvelope`), normalised against that voice's *own* busiest moment: the
+question a wave answers is "is this instrument playing, and is it about to?",
+not "how loud is it". A two-note triangle part gets a wave as tall as the bass.
+
+The rails also pulse with the backing drums, and the far end of the highway
+glows in the blend of whatever is currently sounding.
+
+### Easy mode: only the keys the part plays
+
+Most parts touch a fraction of their range — Gerudo Valley's bass covers 45
+semitones but visits **17 notes**, and its percussion part plays 480 notes on a
+single pitch. The keys in between are only there to be missed.
+
+**Easy** (the default) therefore draws one equal-width key per pitch the part
+actually plays, and the highway's lanes follow. **Hard** draws the full
+chromatic keyboard across the range. The switch is on the instrument picker.
+
+The lane is still the MIDI note in both modes, so the judge, the chart and MIDI
+input are untouched — only which keys get drawn, and where. What does change is
+the *binding* model: easy mode names keys by position (the nth pitch), so it has
+its own map, and there is no octave to shift.
+
+### The highway catches fire
+
+Past a combo of 10 — the same place the score multiplier starts, so the fire
+*is* the multiplier made visible rather than a second competing signal — the
+incoming notes start to burn. Full blaze is a combo of 40.
+
+The flames take **each note's own colour**, pushed toward white at the core,
+rather than a separate amber fire palette: amber flames on a purple highway read
+as an effect pasted over the top, where keeping the hue makes the note itself
+look alight. They stand up as camera-facing tongues rather than lying on the
+floor — a flat wash reads as a stain on the track, and the thing that makes fire
+look like fire is that it rises — and they're emitted along the *length* of each
+bar, so a held note burns end to end. Embers lift off the hit line in the same
+two colours.
+
+It's smoothed rather than switched, and falls slower than it rises, so a big
+combo lights up promptly but a broken one visibly burns out instead of blinking
+off. Missed notes stay red throughout — a dropped note shouldn't be dressed up
+as part of the streak.
+
+### Difficulty is measured, not declared
+
+`rateDifficulty` scores independent things and weights them: onset density
+(peak, not just average), **how many distinct keys there are to cover**, chord
+width, hand travel, pitch reach, and rhythmic irregularity.
+
+Key count is deliberately separate from pitch *span*: a part can range over two
+octaves and use four notes, or sit inside one octave and use every semitone in
+it. The second is much harder, and until it was counted the rating couldn't tell
+them apart — Gerudo Valley's one-pad 300-note drum part now reads Beginner while
+its 17-key bass reads Hard. Sparse parts are still held back however far they
+leap.
+
+Difficulty rates the part; it never rewrites it. There are no easy/medium charts
+that drop notes — what you see is what the luting says.
+
+### Real samples, loaded before the count-in
+
+The songs play through LuteBoi's actual recorded instruments — 16 packs of 30
+multisampled notes each, plus the full drum kit, in `public/samples/`. This is
+**on by default**, unlike the vendored engine, which defaults to its synth: that
+is the right call for Luting Studio, where you audition a bar at a time and want
+it instant, and the wrong one for a game you hear straight through once.
+
+The packs for a song are also fetched and decoded *before* the count-in rather
+than lazily during playback. The engine will happily start on the synth and swap
+each instrument over as its pack lands, but that makes the opening bars sound
+wrong and then change under you — much more noticeable than a second of
+"Tuning up".
+
+Lute, Bass, Chiptune and Percussion have no packs and never will: LuteBoi
+synthesises those itself (Karplus-Strong for the lute's twang), so the built-in
+synth *is* the faithful sound for them. The other sixteen are recordings.
+
+### One clock
+
+`Transport` owns a single `AudioContext`, and song time comes from
+`ctx.currentTime`, not `performance.now()` or the frame loop. The highway, the
+judge and the backing audio all read the oscillator that is actually producing
+the sound, so they cannot drift apart; a late frame moves the picture, never the
+music. Presses are judged against `now() + outputLatency`, because on a
+high-latency output the gap between handling an event and hearing it is most of
+a Perfect window.
+
+This is also why the game has its own `liveVoice.ts` rather than reusing Luting
+Studio's `liveSynth.ts`: that module owns a private `AudioContext`, and a second
+clock is the one thing the judge can't tolerate.
+
+### The playfield is always dark
+
+Light mode themes the menus, settings and results. The highway stays dark in
+both, because every effect on it — the note bloom, the rails, the hit line, the
+lane flashes — is additive blending, which is to say *light added to what's
+behind it*. On a pale floor it has nowhere to go and saturates to flat white.
+`.game` re-declares the dark tokens so the HUD over the highway stays readable.
+
+## The start gate
+
+Nothing begins until you press <kbd>Space</kbd>. The gate covers the highway
+only — **the instrument underneath stays live**, so before anything is scored
+you can play it, hear it, watch a MIDI controller light the keys it's actually
+sending, and shift the transpose until the octaves line up.
+
+**Remap keys** turns the instrument into the mapping surface: click the key or
+pad you mean, then press the computer key you want on it. <kbd>Backspace</kbd>
+clears a binding, <kbd>Esc</kbd> cancels.
+
+**Every** key on the drawn instrument can be mapped. Offsets run negative as
+well as positive, so the <kbd>Z</kbd>–<kbd>M</kbd> row reaches the octave below
+the home row — which is where a part sitting under your hands has to go. The
+home row starts one octave up from the keyboard's bottom so those negative
+offsets have somewhere real to point.
+
+A key can only mean one thing, so binding a key that was already in use frees it
+from its old slot — otherwise a careless remap silently plays two notes at once.
+<kbd>Space</kbd> and <kbd>Esc</kbd> can't be bound (they start and pause), nor
+can modifiers, nor the arrow keys — those shift the octave, and living on
+unbindable keys is what stops a remap stranding you on a range you can't leave.
+
+## Your collection
+
+Songs live in IndexedDB, keyed by a hash of their notation, and the picker is
+also the library manager: add, import, export, delete.
+
+- **Paste** asks for a title and artist, since a pasted luting carries no
+  metadata of its own. One message or a whole **multilute** — the
+  `#lute m …` several-message format the LuteBoi optimiser emits — is fine;
+  the parts are rejoined and stored as a single luting.
+- **Import** takes loose `.lute` files, a collection zip, or a mix, and reads
+  the conventional `//Title` / `//Author:` headers so nothing has to be
+  described by hand. A file with no headers falls back to its filename
+  (`GerudoValley.lute` → "Gerudo Valley"). Anything unreadable is reported
+  rather than thrown, so one bad file in a zip of fifty doesn't lose the other
+  forty-nine.
+- **Adding the same music twice is recognised**, however it arrived and
+  whatever it's called — the hash is of the notation with comments and
+  whitespace stripped, so a retitled copy, a reflowed copy and a multilute all
+  collapse onto the song you already have.
+- **Export** writes one `.lute` per song into a zip, with the headers rebuilt
+  from the stored title and artist so an edited title survives the round trip.
+  Re-importing your own export therefore dedupes cleanly against what's already
+  there.
+
+## What's remembered, and where
+
+| | |
+| --- | --- |
+| **localStorage** | Global preferences, plus the *carried* key mapping — small, synchronous, wanted before first paint. |
+| **IndexedDB** | Two stores, both keyed by the luting's hash. `library` is the notation you've added; `songs` is what happened when you played it — its own key mapping, last instrument, best score per instrument, per-song speed and timing. They're separate because deleting a song shouldn't have to decide whether your scores go with it. |
+
+**Key mappings belong to the song.** Ranges and kits differ, so a layout that
+suits one chart is wrong for the next, and redoing it on every switch is the
+thing to avoid — each song keeps its own and gets it back when you return.
+
+A brand-new song still has to start from something, though, and the factory
+layout every time would annoy anyone who has arranged the keys to suit their
+hands. So the *carried* mapping — the last one you touched — is what a song with
+no mapping of its own inherits. Set your layout once and every new song opens
+with it; change it inside a song and only that song changes.
+
+Both maps are relative, which is what makes them portable: the piano map is
+key → semitone above the base octave, the drum map is key → pad *position*
+(0 is always the lowest kit piece).
+
+`lutingHash` hashes the *notation* — comments and whitespace stripped — so a
+song recognises itself however it arrived, and retitling a luting doesn't orphan
+its scores. Changing a note deliberately does: that's a different chart.
+
+**Copy setup** in Settings packs your preferences and key mapping into one
+pasteable code, so a mapping can be shared with someone else.
+
+> While implementing the hash I found a latent bug in the upstream parser's
+> comment handling and worked around it — see `stripComments` in
+> [`src/game/hash.ts`](src/game/hash.ts).
+
+## Input
+
+| | |
+| --- | --- |
+| **MIDI controller** | Chrome/Edge only (Web MIDI). Nothing is requested until you click Connect. Mirror ports are de-duplicated, and there's an octave transpose for short keyboards. |
+| **On-screen instrument** | Any browser. Click or drag across the keys for a glissando. |
+| **Computer keyboard** | Home row = white keys, the row above = black keys, the <kbd>Z</kbd>–<kbd>M</kbd> row = the octave below, <kbd>←</kbd>/<kbd>→</kbd> shift an octave. Drum pads bind left to right from <kbd>A</kbd>. All remappable. |
+
+Whatever you play it with, a key does three things: it lights while held, it
+flashes the verdict it earned — mint for Perfect, purple for Great, grey for
+Good, red for a note the chart didn't want — and it sounds, as the instrument
+you chose to play, whether you were right or not. All three run off the same
+event, so a hardware controller behaves identically to a mouse click.
+
+Misses are deliberately *not* flashed on the keyboard: a miss is a note you
+didn't play, and lighting the key you failed to reach turns a hard passage into
+a strobe. The highway shows those in red instead.
+
+If a MIDI note lands outside the drawn keyboard — a controller sitting an octave
+below the part, or a pad for a drum this song's kit doesn't use — the strip
+above the keys says so, rather than the note silently vanishing.
+
+Notes are judged on their onsets. Long notes are drawn at their true length and
+sustain while you hold them, but holding isn't separately scored.
+
+## Calibration
+
+The results screen reports your **timing bias** — the signed average of how
+early or late you were. A consistent number there is latency, not you; put its
+negative into the calibration offset in Settings and it goes away.
+
+## `src/luting-core/` is vendored
+
+That directory is a verbatim copy of Luting Studio's parser, audio engine,
+sample loader and MIDI input, plus its sample packs, songs and mascot art.
+**Don't edit it** — run `./scripts/sync-core.sh` to re-copy after an upstream
+fix and review with `git diff`. See [`src/luting-core/README.md`](src/luting-core/README.md).
+
+## Credits
+
+Luting notation and the sampled instruments are [LuteBoi](https://luteboi.com/)'s
+([syntax reference](https://github.com/AnAnnoyingCat/lutingsyntax)). The mascot
+comes from Luting Studio. No music ships with this app.

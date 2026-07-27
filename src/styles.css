@@ -1,0 +1,1632 @@
+/* Palette and type carried over from Luting Studio so the two apps read as one
+   family. The variable names match upstream's, which makes borrowing a rule
+   from that stylesheet a copy rather than a translation. */
+
+:root {
+  --bg: #14121f;
+  --bg-soft: #1d1a2e;
+  --panel: #242038;
+  --panel-2: #2c2745;
+  --border: #3a3458;
+  --text: #e8e4f5;
+  --text-dim: #9b93b8;
+  --accent: #9d7bff;
+  --accent-2: #5ad1b3;
+  --danger: #ff7a90;
+  --warn: #ffc266;
+  --bg-glow: #2a2347;
+  --on-accent: #16122a;
+  --hairline: rgba(255, 255, 255, 0.06);
+  --key-white: #efecf8;
+  --key-white-edge: #c3bcdc;
+  --key-black: #201c33;
+}
+
+:root[data-theme='light'] {
+  --bg: #eceaf4;
+  --bg-soft: #f6f4fb;
+  --panel: #ffffff;
+  --panel-2: #f1eef9;
+  --border: #d8d2ea;
+  --text: #261f3c;
+  --text-dim: #6d6690;
+  --accent: #7c4dff;
+  --accent-2: #15a07e;
+  --danger: #d63a55;
+  --warn: #b07514;
+  --bg-glow: #dcd6f2;
+  --on-accent: #ffffff;
+  --hairline: rgba(40, 30, 70, 0.1);
+  --key-white: #ffffff;
+  --key-white-edge: #cbc4e4;
+  --key-black: #2b2544;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+body {
+  margin: 0;
+  font-family: 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  background: radial-gradient(1200px 600px at 70% -10%, var(--bg-glow) 0%, var(--bg) 55%);
+  color: var(--text);
+  min-height: 100vh;
+  overscroll-behavior: none;
+}
+
+kbd {
+  font: inherit;
+  font-size: 0.82em;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+}
+
+a {
+  color: var(--accent);
+}
+
+.app {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px clamp(12px, 2vw, 32px) 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* The playfield wants the whole viewport, not a centred column. */
+.app.playing {
+  max-width: none;
+  padding: 0;
+  height: 100dvh;
+  gap: 0;
+}
+
+/* ---- header ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.brand-icon {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  transform-origin: bottom center;
+  animation: bob 0.9s ease-in-out infinite;
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(3deg);
+  }
+}
+.topbar h1 {
+  margin: 0;
+  font-size: 25px;
+  letter-spacing: 0.5px;
+}
+.tagline {
+  color: var(--text-dim);
+  font-size: 13px;
+  align-self: flex-end;
+  padding-bottom: 3px;
+}
+.topbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ---- buttons & fields ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.btn:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 650;
+}
+.btn.primary:hover {
+  filter: brightness(1.08);
+  background: var(--accent);
+}
+.btn.ghost {
+  background: transparent;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+select,
+input[type='search'],
+textarea {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+}
+input[type='range'] {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+.hint {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 6px 0 0;
+}
+.hint.inline {
+  display: inline;
+  margin: 0;
+}
+.error-note {
+  color: var(--danger);
+  font-size: 14px;
+  margin: 0;
+}
+.warnings {
+  margin: 0;
+  padding: 10px 10px 10px 28px;
+  border: 1px solid var(--warn);
+  border-radius: 9px;
+  color: var(--warn);
+  font-size: 13px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+/* ---- song picker ---- */
+.picker,
+.instrument-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.picker-head h2 {
+  margin: 0;
+  font-size: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.picker-head h2 .sub {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.picker-mascot {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text-dim);
+  flex: 1;
+  min-width: 180px;
+}
+.search input {
+  border: 0;
+  background: none;
+  padding: 9px 0;
+  flex: 1;
+  outline: none;
+}
+
+.paste-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.picker.dragging {
+  outline: 2px dashed var(--accent);
+  outline-offset: 10px;
+  border-radius: 12px;
+}
+
+.song-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+}
+.song-card {
+  display: flex;
+  align-items: stretch;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  transition: border-color 0.12s, transform 0.1s, background 0.12s;
+}
+.song-card:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  transform: translateY(-2px);
+}
+.song-open {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 13px 6px 13px 15px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 10px 0 0 10px;
+}
+.song-remove {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 0 10px 10px 0;
+  transition: color 0.12s, background 0.12s;
+}
+.song-remove:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+/* ---- adding to the collection ---- */
+.add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  align-items: flex-start;
+}
+.add-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.add-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.add-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+.add-form .field {
+  width: 100%;
+}
+.add-form input[type='text'],
+.add-form .field input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.notice {
+  margin: 0;
+  font-size: 14px;
+  color: var(--accent-2);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 40px 20px 30px;
+}
+.empty img {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  animation: bob 0.9s ease-in-out infinite;
+}
+.empty h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.empty p {
+  margin: 0;
+  max-width: 52ch;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.empty code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--panel-2);
+}
+.empty-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 6px;
+}
+.song-title {
+  font-weight: 650;
+  font-size: 15px;
+}
+.song-author {
+  font-size: 12px;
+  color: var(--accent-2);
+}
+.song-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+/* ---- instrument picker ---- */
+.track-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 10px;
+}
+.track-card {
+  display: flex;
+  align-items: stretch;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  transition: border-color 0.12s, transform 0.1s, background 0.12s;
+}
+.track-card:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  transform: translateY(-2px);
+}
+.track-pick {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 14px 4px 14px 16px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 11px 0 0 11px;
+}
+.track-audition {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 0 11px 11px 0;
+  transition: color 0.12s, background 0.12s;
+}
+.track-audition:hover {
+  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+}
+.track-audition.busy {
+  color: var(--accent);
+}
+.track-audition.busy svg,
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.track-icon {
+  font-size: 30px;
+  line-height: 1;
+}
+.track-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.track-name {
+  font-weight: 650;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.merged-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--accent-2) 20%, transparent);
+  color: var(--accent-2);
+}
+.track-diff {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+.track-diff strong {
+  color: var(--accent);
+}
+.track-meta,
+.track-range {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.track-go {
+  color: var(--text-dim);
+}
+.track-card:hover .track-go {
+  color: var(--accent);
+}
+
+.stars {
+  display: inline-flex;
+  gap: 2px;
+}
+.stars i {
+  width: 7px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--border);
+  display: block;
+}
+.stars i.on {
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+}
+
+/* ---- game ---- */
+
+/* The highway is dark in both app themes — see the note on HighwayTheme: every
+   effect on it is additive light, which has nowhere to go on a pale floor. So
+   the playfield re-declares the dark tokens for everything drawn over it (the
+   HUD, the keyboard, the pause overlay), and light mode themes the chrome
+   around it instead. */
+.game {
+  --bg: #14121f;
+  --bg-soft: #1d1a2e;
+  --panel: #242038;
+  --panel-2: #2c2745;
+  --border: #3a3458;
+  --text: #e8e4f5;
+  --text-dim: #9b93b8;
+  --accent: #9d7bff;
+  --accent-2: #5ad1b3;
+  --danger: #ff7a90;
+  --warn: #ffc266;
+  --on-accent: #16122a;
+  --hairline: rgba(255, 255, 255, 0.06);
+  --key-white: #efecf8;
+  --key-white-edge: #c3bcdc;
+  --key-black: #201c33;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+/* Everything above the instrument. Overlays that should leave the keyboard
+   playable (the start gate) are absolute inside this; ones that shouldn't (the
+   pause dialog) are fixed and sit outside it. */
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.highway-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---- HUD ---- */
+/* One flow, not a pile of absolutely-positioned corners: the transport buttons
+   and the score both want the top right, and stacking them there meant the
+   score was drawn underneath the buttons and couldn't be read. */
+.hud {
+  position: absolute;
+  inset: 0 0 auto 0;
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+  z-index: 3;
+}
+.hud-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.hud-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* the only part of the HUD you can actually click */
+  pointer-events: auto;
+}
+.hud-scores {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+/* octave + MIDI transpose, inline in the toolbar */
+.octave {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.octave .icon-btn {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: none;
+}
+.octave-range {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 600;
+}
+.octave-label {
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-size: 10px;
+}
+.octave-value {
+  min-width: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.octave-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 3px;
+}
+.hud-song {
+  display: flex;
+  flex-direction: column;
+}
+.hud-title {
+  font-size: 17px;
+  font-weight: 650;
+  text-shadow: 0 2px 12px var(--bg);
+}
+.hud-track {
+  font-size: 13px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* the backing waves can sweep bright colour right behind this corner */
+  text-shadow: 0 1px 8px var(--bg), 0 0 14px var(--bg);
+}
+.hud-merged {
+  font-style: normal;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--accent-2) 20%, transparent);
+  color: var(--accent-2);
+}
+
+.hud-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  list-style: none;
+  margin: 7px 0 0;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-shadow: 0 1px 8px var(--bg), 0 0 14px var(--bg);
+}
+.hud-band li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.hud-band i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  display: block;
+}
+
+.hud-centre {
+  position: absolute;
+  top: 82px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+}
+.verdict {
+  text-align: center;
+  animation: verdict-pop 0.42s ease-out forwards;
+}
+.verdict-word {
+  display: block;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.verdict-delta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.verdict.perfect .verdict-word {
+  color: var(--accent-2);
+  text-shadow: 0 0 22px color-mix(in srgb, var(--accent-2) 70%, transparent);
+}
+.verdict.great .verdict-word {
+  color: var(--accent);
+}
+.verdict.good .verdict-word {
+  color: var(--text-dim);
+}
+.verdict.miss .verdict-word {
+  color: var(--danger);
+}
+@keyframes verdict-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.7) translateY(6px);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1.06) translateY(0);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+.hud-right {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.hud-score {
+  font-size: 28px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 12px var(--bg);
+}
+.hud-combo {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.hud-combo strong {
+  color: var(--text);
+  font-size: 17px;
+}
+.hud-combo em {
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 700;
+}
+.hud-combo.hot strong {
+  color: var(--accent-2);
+}
+.hud-combo-idle {
+  opacity: 0.5;
+}
+.hud-acc {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 4;
+  border-radius: 3px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+.hud-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.12s linear;
+}
+
+/* ---- countdown ---- */
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 4;
+}
+.countdown-mascot {
+  width: 92px;
+  height: 92px;
+  object-fit: contain;
+  animation: bob 0.5s ease-in-out infinite;
+}
+.loading-label {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.loading-sub {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.countdown-number {
+  font-size: 74px;
+  font-weight: 800;
+  color: var(--accent);
+  text-shadow: 0 0 42px color-mix(in srgb, var(--accent) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- instrument ---- */
+.stage-foot {
+  position: relative;
+  z-index: 2;
+  background: var(--bg);
+  /* flush against the hit line: no strip of chrome between the lanes and the
+     keys they land on */
+  line-height: 0;
+}
+.range-warn {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--warn);
+  text-shadow: 0 1px 8px var(--bg);
+}
+.instrument {
+  position: relative;
+  width: 100%;
+  height: clamp(104px, 17vh, 156px);
+  user-select: none;
+  touch-action: none;
+}
+
+.key {
+  position: absolute;
+  top: 0;
+  padding: 0;
+  border: 0;
+  /* clips the flash overlay to the key's rounded corners */
+  overflow: hidden;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  transition: background 0.04s, box-shadow 0.06s;
+}
+.key.white {
+  height: 100%;
+  background: linear-gradient(180deg, var(--key-white) 82%, var(--key-white-edge));
+  border-radius: 0 0 6px 6px;
+  border-right: 1px solid var(--key-white-edge);
+  color: #6d6690;
+}
+.key.white.anchor {
+  border-right-color: var(--accent);
+}
+.key.black {
+  height: 62%;
+  background: linear-gradient(180deg, #3b3459, var(--key-black));
+  border-radius: 0 0 5px 5px;
+  z-index: 2;
+  color: #a49bc8;
+  box-shadow: 0 3px 7px rgba(0, 0, 0, 0.45);
+}
+.key.white.held {
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #fff));
+  color: var(--on-accent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.key.black.held {
+  background: linear-gradient(180deg, var(--accent-2), color-mix(in srgb, var(--accent-2) 60%, #000));
+  color: var(--on-accent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent-2) 65%, transparent);
+}
+/* Verdict tint over a played key. Fades from the hit line upward, so a hit
+   reads as the note's colour rising off the key rather than the key changing. */
+.key-flash {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: key-flash 380ms ease-out forwards;
+}
+.key-flash.perfect {
+  background: linear-gradient(0deg, var(--accent-2), transparent 85%);
+  box-shadow: inset 0 -3px 0 var(--accent-2);
+}
+.key-flash.great {
+  background: linear-gradient(0deg, var(--accent), transparent 85%);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+.key-flash.good {
+  background: linear-gradient(0deg, var(--text-dim), transparent 85%);
+  box-shadow: inset 0 -3px 0 var(--text-dim);
+}
+.key-flash.wrong {
+  background: linear-gradient(0deg, var(--danger), transparent 85%);
+  box-shadow: inset 0 -3px 0 var(--danger);
+}
+@keyframes key-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* The note name and the key binding are different kinds of information, so
+   they're separated and styled apart: the name is a quiet label on the key, the
+   binding is a chip you can read at a glance mid-song. Stacked with real space
+   between them — at 9px and 0.75 opacity they used to run together and the
+   binding was all but invisible. */
+.key-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  opacity: 0.55;
+  line-height: 1;
+}
+.key-bind,
+.pad-bind {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  min-width: 17px;
+  padding: 3px 4px;
+  border-radius: 5px;
+  border: 0;
+  text-align: center;
+  text-transform: uppercase;
+  background: #6b5fa8;
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+.key.white .key-bind {
+  background: #5b4f96;
+}
+.key.black .key-bind,
+.pad-bind {
+  background: rgba(255, 255, 255, 0.9);
+  color: #241b3a;
+  box-shadow: none;
+}
+/* A held key inverts the chip so it stays readable against the lit background. */
+.key.held .key-bind,
+.pad.held .pad-bind {
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+}
+
+/* Easy mode: equal-width keys, one per pitch the part plays. The black-key
+   tint is kept so the notes are still recognisable, but nothing is raised or
+   narrowed — with no chromatic run to sit inside, that would only mislead. */
+.instrument.compact .key {
+  height: 100%;
+  border-radius: 0 0 7px 7px;
+  border-right: 1px solid var(--bg);
+  padding-bottom: 10px;
+  gap: 7px;
+}
+.instrument.compact .key.black {
+  background: linear-gradient(180deg, #3b3459, var(--key-black));
+  color: #b8afd8;
+  z-index: 1;
+  box-shadow: none;
+}
+/* The compact base rules carry more specificity than the shared `.held` ones,
+   so a lit black key in easy mode was being painted unlit. Restate them here
+   rather than weakening the base: this is the pair that has to win. */
+.instrument.compact .key.white.held {
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #fff));
+  color: var(--on-accent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.instrument.compact .key.black.held {
+  background: linear-gradient(180deg, var(--accent-2), color-mix(in srgb, var(--accent-2) 60%, #000));
+  color: var(--on-accent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent-2) 65%, transparent);
+}
+.instrument.compact .key.anchor {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.instrument.compact .key-name {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 8px;
+}
+.mode-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.mode-option strong {
+  font-size: 14px;
+  color: var(--text);
+}
+.mode-option span {
+  font-size: 12px;
+}
+.mode-option:hover {
+  border-color: var(--accent);
+}
+.mode-option.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+.mode-option.on strong {
+  color: var(--accent);
+}
+
+.instrument.pads {
+  height: clamp(94px, 14vh, 135px);
+}
+.pad {
+  position: absolute;
+  overflow: hidden;
+  top: 0;
+  height: 100%;
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  /* lanes butt up against each other; the gap comes from the inset border */
+  outline: 3px solid var(--bg);
+  outline-offset: -3px;
+  transition: background 0.05s, color 0.05s, box-shadow 0.08s;
+}
+.pad-name {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.15;
+  overflow: hidden;
+}
+.pad.held {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 26px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* ---- overlays ---- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(7px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 20;
+}
+.overlay-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  padding: 22px 24px;
+  width: min(620px, 100%);
+  max-height: 88dvh;
+  overflow: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+.overlay-card h2 {
+  margin: 0 0 12px;
+  font-size: 21px;
+}
+.overlay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.overlay-head h2 {
+  margin: 0;
+}
+.overlay-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+/* ---- start gate ---- */
+/* Covers the highway only — the instrument below stays live and playable. */
+.start-gate {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(4px);
+  z-index: 6;
+}
+.start-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  padding: 18px 22px;
+  width: min(520px, 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+.start-hint {
+  margin: 0;
+  max-width: 44ch;
+}
+.start-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+/* remap mode, on the instrument itself */
+.key.remappable,
+.pad.remappable {
+  cursor: crosshair;
+}
+.key.white.remappable {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.key.black.remappable,
+.pad.remappable {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.key.capturing,
+.pad.capturing {
+  box-shadow: inset 0 0 0 3px var(--accent-2), 0 0 22px color-mix(in srgb, var(--accent-2) 60%, transparent);
+  z-index: 3;
+}
+.key.unreachable,
+.pad.unreachable {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.start-mascot {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  animation: bob 0.9s ease-in-out infinite;
+}
+.start-gate h2 {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.start-gate h2 .sub {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.start-best {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent-2);
+}
+.start-btn {
+  font-size: 16px;
+  padding: 11px 22px;
+  margin-top: 4px;
+}
+.start-btn kbd {
+  background: rgba(0, 0, 0, 0.18);
+  border-color: rgba(0, 0, 0, 0.25);
+  color: inherit;
+}
+
+.remap {
+  width: 100%;
+  text-align: left;
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+.remap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+  margin: 10px 0;
+}
+.remap-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.remap-slot:hover {
+  border-color: var(--accent);
+}
+.remap-slot.capturing {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px var(--accent-2);
+}
+.remap-slot.capturing kbd {
+  color: var(--accent-2);
+}
+.remap-name {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-card.last-played {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.track-best {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--accent-2);
+}
+
+/* ---- settings ---- */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.settings section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.settings h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-dim);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.field em {
+  font-style: normal;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.check input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+
+.share-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.midi-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.midi-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0;
+}
+.midi-note.error {
+  color: var(--danger);
+}
+
+/* ---- results ---- */
+.results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 10px 0 30px;
+}
+.results h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.results h2 .sub {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.results-mascot {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  margin: 6px 0;
+}
+.grade {
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 58px;
+  font-weight: 800;
+  border: 3px solid var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 46px color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: grade-in 0.5s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@keyframes grade-in {
+  from {
+    transform: scale(0.4) rotate(-14deg);
+    opacity: 0;
+  }
+}
+.grade-S {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+  box-shadow: 0 0 56px color-mix(in srgb, var(--accent-2) 45%, transparent);
+}
+.grade-D,
+.grade-F {
+  border-color: var(--danger);
+  color: var(--danger);
+  box-shadow: none;
+}
+.full-combo {
+  margin: 0;
+  color: var(--accent-2);
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+.score-big {
+  font-size: 40px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.score-big em {
+  font-style: normal;
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.acc-big {
+  color: var(--text-dim);
+  font-size: 15px;
+}
+.tally {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
+  width: min(620px, 100%);
+}
+.tally > div {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 6px;
+}
+.tally dt {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+.tally dd {
+  margin: 3px 0 0;
+  font-size: 21px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.tally dd em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.tally .perfect dd {
+  color: var(--accent-2);
+}
+.tally .great dd {
+  color: var(--accent);
+}
+.tally .miss dd {
+  color: var(--danger);
+}
+.calibrate {
+  max-width: 460px;
+}
+
+.loading-stage {
+  display: grid;
+  place-items: center;
+  height: 100dvh;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+
+.credits {
+  margin-top: auto;
+  padding-top: 20px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  .hud {
+    grid-template-columns: 1fr auto;
+    padding: 10px;
+  }
+  .hud-centre {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-height: 44px;
+  }
+  .hud-score {
+    font-size: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-icon,
+  .countdown-mascot {
+    animation: none;
+  }
+  .verdict {
+    animation-duration: 0.01s;
+    animation-fill-mode: forwards;
+  }
+  .grade {
+    animation: none;
+  }
+}
