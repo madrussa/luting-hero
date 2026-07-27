@@ -27,8 +27,9 @@ npm test
   real ones.
 - **Pick an instrument** — each one is rated 1–10 for difficulty from what it
   actually asks of you *on the keyboard you picked*, which is also on this
-  screen: **Easy** folds the part onto eight keys, **Hard** gives it one key per
-  note it plays, **Impossible** gives it the whole chromatic keyboard.
+  screen: **Super EZ** folds the part onto four keys, **Easy** onto eight,
+  **Hard** gives it one key per note it plays, **Impossible** gives it the whole
+  chromatic keyboard.
   **Preview song** plays the whole arrangement, and the speaker on each card
   auditions that instrument alone. Parts with fewer than ten notes aren't
   offered: picking a two-note triangle is a minute of watching someone else's
@@ -121,18 +122,22 @@ not "how loud is it". A two-note triangle part gets a wave as tall as the bass.
 The rails also pulse with the backing drums, and the far end of the highway
 glows in the blend of whatever is currently sounding.
 
-### Three keyboards, and eight keys at the easy end
+### Four keyboards, and four keys at the easy end
 
 Most parts touch a fraction of their range — Gerudo Valley's bass covers 45
 semitones but visits **17 notes**, and its percussion part plays 480 notes on a
 single pitch. The keys in between are only there to be missed. So the picker
-offers three keyboards:
+offers four keyboards:
 
 | | |
 | --- | --- |
+| **Super EZ** | **Four keys**, one per finger, and never a re-strike faster than a hand can give one. |
 | **Easy** (default) | The part folded onto **at most eight keys**, with the notes that share one merged. |
 | **Hard** | One equal-width key per pitch the part actually plays. |
 | **Impossible** | The full chromatic keyboard across the part's range. |
+
+Easy is the default rather than Super EZ: four keys is the floor for whoever
+needs it, not what everyone should meet the game on.
 
 Drawing only the pitches a part plays was already a big cut, but "only the
 pitches it plays" is still seventeen keys for a bass line and more for anything
@@ -140,9 +145,9 @@ chordal. That is fine on a controller and hopeless on a computer keyboard, where
 about eight keys is what one hand holds without moving — and owning the hardware
 shouldn't be the price of admission. Hence the fold, in `src/game/easy.ts`.
 
-**How it folds.** Neighbouring pitches are grouped until at most eight keys are
-left, minimising how far each note sits from the centre of its group *weighted
-by how often it is played*. That is one-dimensional k-means with an order
+**How it folds.** Neighbouring pitches are grouped until the setting's key
+budget is met, minimising how far each note sits from the centre of its group
+*weighted by how often it is played*. That is one-dimensional k-means with an order
 constraint, which a dynamic program solves exactly — so the same part always
 folds the same way, and a pitch struck three hundred times is never merged away
 to spare a key for one struck twice. Groups are contiguous, so going up in the
@@ -155,6 +160,17 @@ fold rather than being a second mechanism: `mergeSimultaneous` already collapsed
 two voices doubling a pitch, because you can only press a key once, and a folded
 keyboard just gives it more pairs to collapse.
 
+**Super EZ opens that window from "at the same instant" to "as good as".** Four
+keys puts so much of a part on each one that runs which were comfortable spread
+across a keyboard become a single finger tapping faster than it can go — so on
+that setting alone, notes landing on one key within about a tenth of a second of
+each other are one press. It is the same rule with a wider window, measured from
+the press rather than from the note before it, so a long run is thinned to a
+playable rate rather than collapsing into one enormous tap. Every note still
+sounds. Nothing else is dropped, thinned or rewritten on any keyboard: the
+picker's note count is the number of presses the part will ask you for, and the
+card says how many notes rode along with them.
+
 **What you hear is not folded.** A press sounds the notes it actually
 *claimed* — the real pitch, and the whole chord where a chord folded onto that
 key — which is why the judge can say which note a press took. Easy mode changes
@@ -166,12 +182,13 @@ judge, the highway and the input router know about any of this — `LaneMap`
 answers "which lane" and "what does it sound", and nothing downstream has to
 learn that a fold happened.
 
-Bindings stay positional (the nth key drawn), so one map serves both melodic
-keyboards: easy mode's eight keys are the first eight slots of the map hard mode
-spreads over every pitch. With the factory layout that is <kbd>A</kbd>–<kbd>K</kbd>,
-the home row exactly. There is no octave to shift in either.
+Bindings stay positional (the nth key drawn), so one map serves every melodic
+keyboard drawn that way: Super EZ's four keys are the first four slots of the map
+easy mode spreads over eight and hard mode over every pitch in the part. With the
+factory layout that is <kbd>A</kbd>–<kbd>F</kbd>, <kbd>A</kbd>–<kbd>K</kbd>, and
+onward — the home row. None of them has an octave to shift.
 
-**Best scores are kept per keyboard**, because the same part on eight folded keys
+**Best scores are kept per keyboard**, because the same part on four folded keys
 and on the full chromatic keyboard are different things to have done, with
 different note counts, and a score from one says nothing about the other.
 
@@ -234,13 +251,14 @@ leap.
 It rates **the part on the keyboard you chose**, because that is the thing in
 front of you: fold seventeen keys onto eight and the same bass line drops from
 Hard to Easy, chords included, and a card still quoting the unfolded numbers
-would be describing a mode you aren't about to play. On a positional keyboard —
+would be describing a mode you aren't about to play. Fold it onto four and it
+drops again. On a positional keyboard —
 a kit, or a fold — the rating is measured in keys rather than semitones, since
 every key is already under one hand.
 
 Difficulty never rewrites the *music*. Nothing drops notes to make a chart
-easier; the most easy mode does is merge two notes you could only have pressed
-as one, and you still hear both.
+easier; the most a folded keyboard does is merge notes you could only have
+pressed as one, and you still hear all of them.
 
 ### Real samples, loaded before the count-in
 

@@ -1,7 +1,7 @@
 // The fold: what easy mode does to a part, and what it refuses to do to it.
 
 import { describe, it, expect } from 'vitest'
-import { MAX_EASY_KEYS, buildEasyMap, playableTrack } from './easy'
+import { MAX_EASY_KEYS, MAX_SUPER_EZ_KEYS, buildEasyMap, playableTrack } from './easy'
 import { buildChart, rateDifficulty, soundsOf } from './chart'
 import type { GameNote, Track } from './chart'
 
@@ -110,6 +110,70 @@ describe('buildEasyMap', () => {
     // kit order survives the fold, so the kick is still the leftmost pad
     expect(easy.keys[0].drums[0]).toBe('o0a')
     expect(easy.keys.flatMap((k) => k.drums)).toEqual(kit.drums)
+  })
+})
+
+describe('Super EZ', () => {
+  it('folds down to four keys', () => {
+    const play = playableTrack(chromatic(), 'superez')
+    expect(play.easy!.keys).toHaveLength(MAX_SUPER_EZ_KEYS)
+    expect(play.track.difficulty.keys).toBe(MAX_SUPER_EZ_KEYS)
+  })
+
+  it('makes one press of notes on a key too close together to strike twice', () => {
+    // Four notes on one key inside a re-strike of each other: one finger, and
+    // no finger goes that fast.
+    const play = playableTrack(
+      melodic([
+        note(0, 60),
+        note(0.04, 60),
+        note(0.08, 61),
+        note(0.1, 62),
+        ...Array.from({ length: 12 }, (_, i) => note(5 + i, 72 + i * 2)),
+      ]),
+      'superez'
+    )
+    const struck = play.track.notes.filter((n) => n.timeSec < 1)
+    expect(struck).toHaveLength(1)
+    // and every one of them still sounds
+    expect(soundsOf(struck[0]).map((s) => s.midi).sort((a, b) => a! - b!)).toEqual([60, 61, 62])
+  })
+
+  it('measures the window from the press, so a long run is not one giant note', () => {
+    // Notes every 80 ms for a second: each press covers what falls within a
+    // re-strike of *it*, not of the note before it, or the whole run would
+    // collapse into a single tap.
+    const notes = Array.from({ length: 13 }, (_, i) => note(i * 0.08, 60, 0.05))
+    const play = playableTrack(melodic(notes), 'superez')
+    expect(play.track.notes.length).toBeGreaterThan(4)
+    expect(play.track.notes.length).toBeLessThan(notes.length)
+  })
+
+  it('never merges across keys, however close together', () => {
+    const track = chromatic()
+    const easy = buildEasyMap(track, MAX_SUPER_EZ_KEYS)
+    const apart = [easy.keys[0].midis[0], easy.keys[3].midis[0]]
+    const play = playableTrack(
+      melodic([...track.notes, ...apart.map((midi) => note(100, midi, 1))]),
+      'superez'
+    )
+    expect(play.track.notes.filter((n) => n.timeSec === 100)).toHaveLength(2)
+  })
+
+  it('leaves the re-strike alone on every other keyboard', () => {
+    // Eight keys is still a hand's worth per finger; only the four-key floor
+    // makes that promise.
+    const notes = [note(0, 60), note(0.05, 60), ...Array.from({ length: 12 }, (_, i) => note(5 + i, 72))]
+    for (const mode of ['easy', 'hard', 'impossible'] as const) {
+      expect(playableTrack(melodic(notes), mode).track.notes).toHaveLength(notes.length)
+    }
+  })
+
+  it('is easier than easy mode on a part wide enough to feel both', () => {
+    const track = chromatic()
+    const easy = playableTrack(track, 'easy').track.difficulty.rating
+    const superez = playableTrack(track, 'superez').track.difficulty.rating
+    expect(superez).toBeLessThanOrEqual(easy)
   })
 })
 

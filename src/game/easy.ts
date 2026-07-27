@@ -25,7 +25,7 @@
 // the real pitch, and the whole chord when a chord folded onto that key — so
 // easy mode changes what you press, never what the song is.
 
-import { mergeSimultaneous, rateDifficulty } from './chart'
+import { SIMULTANEITY_SEC, mergeSimultaneous, rateDifficulty } from './chart'
 import type { GameNote, NoteSound, Track } from './chart'
 import { isBlackKey, noteName } from './lanes'
 import type { KeyboardMode } from './settings'
@@ -37,6 +37,31 @@ import { DRUM_SOUNDS } from '../luting-core/luting'
  * at a glance on the highway.
  */
 export const MAX_EASY_KEYS = 8
+
+/**
+ * Super EZ: four. One per finger, no thumb, nothing to learn — the floor of the
+ * game, for playing along to a song you have never seen.
+ */
+export const MAX_SUPER_EZ_KEYS = 4
+
+/**
+ * The closest together Super EZ will ask for two presses of the same key.
+ *
+ * Folding onto four keys puts far more of a part on each one, and a run that was
+ * comfortable spread over the keyboard becomes one finger tapping faster than it
+ * can go. So on that setting notes landing on one key within a re-strike of each
+ * other are one press — the same rule as a chord folding onto one key, with the
+ * window opened from "at the same instant" to "as good as". They all still
+ * sound, so the run is heard in full and struck once.
+ *
+ * A tenth of a second is about the limit of one finger repeating; the other
+ * keyboards leave this alone and merge only what is genuinely simultaneous.
+ */
+export const RESTRIKE_SEC = 0.11
+
+/** How many keys a mode folds onto, or null where nothing is folded. */
+export const keyBudget = (mode: KeyboardMode): number | null =>
+  mode === 'superez' ? MAX_SUPER_EZ_KEYS : mode === 'easy' ? MAX_EASY_KEYS : null
 
 export interface EasyKey {
   /** lane id — 0-based, left to right, which is also its binding slot */
@@ -71,9 +96,12 @@ export interface EasyMap {
   laneOfMidi: (midi: number) => number
 }
 
-/** How a part is folded for easy mode. Melodic parts fold by pitch, kits by piece. */
-export function buildEasyMap(track: Track): EasyMap {
-  return track.isDrums ? kitMap(track) : pitchMap(track)
+/**
+ * How a part is folded onto `maxKeys` keys. Melodic parts fold by pitch, kits by
+ * piece.
+ */
+export function buildEasyMap(track: Track, maxKeys = MAX_EASY_KEYS): EasyMap {
+  return track.isDrums ? kitMap(track, maxKeys) : pitchMap(track, maxKeys)
 }
 
 /** How often each distinct value appears, for weighting the fold. */
@@ -83,10 +111,10 @@ function tally<T>(values: (T | undefined)[]): Map<T, number> {
   return counts
 }
 
-function pitchMap(track: Track): EasyMap {
+function pitchMap(track: Track, maxKeys: number): EasyMap {
   const counts = tally(track.notes.map((n) => n.midi))
   const pitches = [...counts.keys()].sort((a, b) => a - b)
-  const groups = partition(pitches, pitches.map((p) => counts.get(p)!), MAX_EASY_KEYS)
+  const groups = partition(pitches, pitches.map((p) => counts.get(p)!), maxKeys)
 
   const keys: EasyKey[] = groups.map((midis, lane) => {
     const voice = busiest(midis, counts)
@@ -128,7 +156,7 @@ function pitchMap(track: Track): EasyMap {
   }
 }
 
-function kitMap(track: Track): EasyMap {
+function kitMap(track: Track, maxKeys: number): EasyMap {
   const counts = tally(track.notes.map((n) => n.drum))
   // Kit order, not pitch: a fold has to keep the kick leftmost, and the
   // positions are what "neighbouring" means on a kit.
@@ -136,7 +164,7 @@ function kitMap(track: Track): EasyMap {
   const groups = partition(
     pieces.map((_, i) => i),
     pieces.map((d) => counts.get(d) ?? 0),
-    MAX_EASY_KEYS
+    maxKeys
   )
 
   const name = (d: string) => DRUM_SOUNDS[d]?.name ?? d
@@ -240,24 +268,32 @@ export interface Playable {
 /**
  * The part as the chosen keyboard mode will actually ask you to play it.
  *
- * Only easy mode changes anything: the notes that folded onto one key at one
- * instant become a single note that sounds all of them, and the difficulty is
- * re-rated against the folded keyboard, because a part you play on eight keys
- * is not the part you play on seventeen and the picker shouldn't claim it is.
+ * Only the folded modes change anything: the notes that landed on one key at one
+ * moment become a single note that sounds all of them, and the difficulty is
+ * re-rated against the folded keyboard, because a part you play on eight keys is
+ * not the part you play on seventeen and the picker shouldn't claim it is.
  */
 export function playableTrack(track: Track, mode: KeyboardMode): Playable {
-  if (mode !== 'easy') return { track, easy: null }
-  const easy = buildEasyMap(track)
+  const maxKeys = keyBudget(mode)
+  if (maxKeys === null) return { track, easy: null }
+  const easy = buildEasyMap(track, maxKeys)
   // Nothing to fold onto: a part with no pitches and no kit isn't playable
   // anyway, and an empty keyboard has no geometry.
   if (easy.keys.length === 0) return { track, easy: null }
-  // A part that already fits is drawn on exactly the keyboard hard mode would
-  // draw for it, so it is the same part and keeps the same rating. Re-measuring
-  // it in keys instead of semitones could otherwise nudge it a step *up* on the
-  // easier setting, which is worse than saying nothing.
-  if (!easy.keys.some((k) => k.folded)) return { track, easy }
+
   const laneOf = (n: GameNote) => easy.laneOf(n)
-  const notes = mergeSimultaneous(track.notes, laneOf)
+  const notes = mergeSimultaneous(
+    track.notes,
+    laneOf,
+    mode === 'superez' ? RESTRIKE_SEC : SIMULTANEITY_SEC
+  )
+  // A part that came through untouched is drawn on exactly the keyboard hard
+  // mode would draw for it, so it is the same part and keeps the same rating.
+  // Re-measuring it in keys instead of semitones could otherwise nudge it a step
+  // *up* on the easier setting, which is worse than saying nothing.
+  if (notes.length === track.notes.length && !easy.keys.some((k) => k.folded)) {
+    return { track, easy }
+  }
   return {
     track: { ...track, notes, difficulty: rateDifficulty(notes, track.isDrums, laneOf) },
     easy,

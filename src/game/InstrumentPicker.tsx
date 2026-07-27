@@ -19,7 +19,7 @@ import {
 import { getPlaybackMode, loadBank } from '../luting-core/samples'
 import { updateSettings, useSettings } from './settings'
 import type { KeyboardMode } from './settings'
-import { MAX_EASY_KEYS, playableTrack } from './easy'
+import { MAX_EASY_KEYS, MAX_SUPER_EZ_KEYS, playableTrack } from './easy'
 import type { EasyMap } from './easy'
 import { bestKey } from './songStore'
 import conducting from '../assets/conducting.webp'
@@ -194,11 +194,14 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
         <img src={conducting} alt="" className="picker-mascot" />
       </div>
 
-      {/* Easy is the default. Most parts ask for more keys than one hand can
-          hold, and a part you can't physically reach isn't a difficulty. */}
+      {/* Easy is the default, not Super EZ: four keys is the floor for whoever
+          needs it, rather than what everyone should meet the game on. Most parts
+          ask for more keys than one hand can hold, and a part you can't
+          physically reach isn't a difficulty. */}
       <div className="mode-switch" role="radiogroup" aria-label="Keyboard">
         {(
           [
+            ['superez', 'Super EZ', `${MAX_SUPER_EZ_KEYS} keys, never faster than a hand`],
             ['easy', 'Easy', `at most ${MAX_EASY_KEYS} keys, chords folded onto one`],
             ['hard', 'Hard', 'one key per note the part plays'],
             ['impossible', 'Impossible', 'the full keyboard across its range'],
@@ -258,7 +261,20 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
                   <strong>{d.label}</strong>
                 </span>
                 <span className="track-meta">
-                  {t.notes.length.toLocaleString()} notes · {d.nps}/s avg, {d.peakNps}/s peak
+                  {t.notes.length.toLocaleString()} notes
+                  {/* Says why the count differs from the other keyboards': a
+                      folded key can't be struck twice at once, or twice in a
+                      hurry, so some of the part's notes ride along with a press
+                      instead of asking for their own. */}
+                  {source.notes.length > t.notes.length && (
+                    <em
+                      title={`${source.notes.length - t.notes.length} of this part's ${source.notes.length} notes land on a key that is already being struck — they still sound, but they need no press of their own`}
+                    >
+                      {' '}
+                      ({(source.notes.length - t.notes.length).toLocaleString()} merged)
+                    </em>
+                  )}{' '}
+                  · {d.nps}/s avg, {d.peakNps}/s peak
                   {d.maxChord > 1 && ` · up to ${d.maxChord} at once`}
                 </span>
                 {best && (

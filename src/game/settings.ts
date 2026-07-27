@@ -11,11 +11,13 @@ export type Theme = 'dark' | 'light'
  * How much keyboard a part is drawn on — the one setting that changes what
  * playing it asks of you.
  *
- * `easy` folds the part onto at most eight keys, merging the pitches that share
- * one; `hard` draws a key per pitch the part plays; `impossible` draws the full
- * chromatic keyboard across its range, most of which exists only to be missed.
+ * `superez` folds the part onto at most four keys and will not ask for a
+ * re-strike faster than a hand can give one; `easy` folds it onto at most
+ * eight; `hard` draws a key per pitch the part plays; `impossible` draws the
+ * full chromatic keyboard across its range, most of which exists only to be
+ * missed.
  */
-export type KeyboardMode = 'easy' | 'hard' | 'impossible'
+export type KeyboardMode = 'superez' | 'easy' | 'hard' | 'impossible'
 
 /**
  * There used to be two modes, `easy` and `full`. The fold arrived underneath
@@ -25,7 +27,9 @@ export type KeyboardMode = 'easy' | 'hard' | 'impossible'
  * what `impossible` is.
  */
 export function normaliseKeyboard(value: unknown): KeyboardMode {
-  if (value === 'easy' || value === 'hard' || value === 'impossible') return value
+  if (value === 'superez' || value === 'easy' || value === 'hard' || value === 'impossible') {
+    return value
+  }
   if (value === 'full') return 'impossible'
   return DEFAULTS.keyboard
 }

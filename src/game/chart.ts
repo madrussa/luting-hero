@@ -127,28 +127,35 @@ const drumOrder = (key: string): number => {
 const ownKey = (n: GameNote): number | string => n.drum ?? n.midi ?? -1
 
 /**
- * Merge notes that land in the same lane at the same instant. Two voices
- * doubling a melody would otherwise put two bars in one lane, and the player
- * can only press the key once — so they collapse into a single note holding
- * the longest duration and the loudest volume.
+ * Merge notes that land in the same lane at the same moment. Two voices doubling
+ * a melody would otherwise put two bars in one lane, and the player can only
+ * press the key once — so they collapse into a single note holding the longest
+ * duration and the loudest volume.
  *
  * `laneOf` is what makes this reusable: with one key per pitch it merges
- * unisons, and with easy mode's folded keyboard it merges the notes of a chord
- * that landed under one key. Those keep sounding — the survivor remembers them
- * in `also` — so folding changes what you press, not what you hear.
+ * unisons, and with a folded keyboard it merges the notes of a chord that landed
+ * under one key. Those keep sounding — the survivor remembers them in `also` —
+ * so folding changes what you press, not what you hear.
+ *
+ * `windowSec` is how much of a moment counts as one. It defaults to what the
+ * notation can genuinely stack at one instant; Super EZ opens it to a re-strike,
+ * because a key you cannot hit twice that fast is a key you hit once.
  */
 export function mergeSimultaneous(
   notes: GameNote[],
-  laneOf: (n: GameNote) => number | string = ownKey
+  laneOf: (n: GameNote) => number | string = ownKey,
+  windowSec: number = SIMULTANEITY_SEC
 ): GameNote[] {
   const out: GameNote[] = []
-  // notes arrive sorted by time; only scan back over the simultaneity window
+  // notes arrive sorted by time, so the scan back only has to cover the window
+  // — and it is measured from the survivor's own onset, which is what stops a
+  // long run chaining into one enormous press.
   for (const n of notes) {
     const lane = laneOf(n)
     let merged = false
     for (let i = out.length - 1; i >= 0; i--) {
       const p = out[i]
-      if (n.timeSec - p.timeSec > SIMULTANEITY_SEC) break
+      if (n.timeSec - p.timeSec > windowSec) break
       if (laneOf(p) !== lane) continue
       p.durSec = Math.max(p.durSec, n.durSec)
       p.volume = Math.max(p.volume, n.volume)
