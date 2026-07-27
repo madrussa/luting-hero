@@ -15,12 +15,13 @@ import { InputRouter, LaneMap } from './input'
 import type { PlayEvent } from './input'
 import { Highway, HIGHWAY_THEME } from './highway'
 import type { HighwayEvent } from './highway'
-import { buildLayout } from './lanes'
+import { buildLayout, keyboardSlots } from './lanes'
 import type { Layout } from './lanes'
-import { backingFor, keyboardRange } from './chart'
+import { backingFor, keyboardRange, soundsOf } from './chart'
 import { buildBacking } from './backing'
 import type { BackingVoice } from './backing'
-import type { Chart, Track } from './chart'
+import type { Chart, NoteSound, Track } from './chart'
+import type { EasyMap } from './easy'
 import { getSettings, hitWindowById, useSettings } from './settings'
 import { useBindings } from './bindings'
 import { getMidiTranspose, setMidiTranspose } from './midiPrefs'
@@ -90,7 +91,18 @@ export interface GameApi {
   finalStats: Stats | null
 }
 
-export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi {
+/**
+ * `track` is the part as it will be played — already folded, in easy mode — and
+ * `easy` is the fold it was folded by, or null on the keyboards where a lane is
+ * simply the pitch. Both come from `playableTrack`, together, because a fold and
+ * the notes it merged only make sense as a pair.
+ */
+export function useGame(
+  chart: Chart,
+  track: Track,
+  easy: EasyMap | null,
+  onQuit: () => void
+): GameApi {
   const settings = useSettings()
   const [phase, setPhase] = useState<Phase>('loading')
   const [hud, setHud] = useState<HudSnapshot>({
@@ -116,10 +128,13 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
   const flashSeq = useRef(0)
   const flashPrune = useRef(0)
   const rangePrune = useRef(0)
+  /** what each held lane is currently sounding, so its release ends that */
+  const soundingRef = useRef(new Map<number, NoteSound[]>())
 
-  // Easy mode draws only the pitches this part plays. Kits are already reduced
-  // to the pieces the song uses, so it only means anything for melodic tracks.
-  const compact = !track.isDrums && settings.keyboard === 'easy' && track.pitches.length > 0
+  // How the computer keys address this keyboard: by position on a kit, a fold
+  // or a key-per-pitch keyboard, by semitone on the chromatic one.
+  const mode = settings.keyboard
+  const slots = useMemo(() => keyboardSlots(track, mode, easy), [track, mode, easy])
 
   // The home row sits one octave above the drawn keyboard's bottom, not on it,
   // so the Z–M row underneath has somewhere real to point: at the base itself
@@ -128,8 +143,8 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
   const initialBase = track.isDrums ? 0 : keyboardRange(track).lowMidi + 12
   const [computerBaseMidi, setComputerBaseMidi] = useState(initialBase)
 
-  const lanesRef = useRef<LaneMap>(new LaneMap(track))
-  const [layout, setLayout] = useState<Layout>(() => buildLayout(track, initialBase, compact))
+  const lanesRef = useRef<LaneMap>(new LaneMap(track, easy))
+  const [layout, setLayout] = useState<Layout>(() => buildLayout(track, initialBase, mode, easy))
 
   // The drawn keyboard follows from the track, the base octave and the key
   // bindings. Deriving it in one effect means a remap at the start gate
@@ -137,8 +152,8 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
   // live, and without this the labels would keep describing the old mapping.
   const bindings = useBindings()
   useEffect(() => {
-    setLayout(buildLayout(track, computerBaseMidi, compact))
-  }, [track, computerBaseMidi, bindings, compact])
+    setLayout(buildLayout(track, computerBaseMidi, mode, easy))
+  }, [track, computerBaseMidi, bindings, mode, easy])
 
   // Read from the input handler, which must not be rebuilt (and so must not
   // close over `layout`) every time the keyboard shifts an octave.
@@ -160,6 +175,9 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
 
   const beatSec = chart.bpm > 0 ? 240 / chart.bpm : 0.5
 
+  // A judgement names the note it claimed by id; playing it needs the note.
+  const notesById = useMemo(() => new Map(track.notes.map((n) => [n.id, n])), [track])
+
 
   // Who's behind you and what they play. Derived once per song/track pair —
   // it's a full pass over the chart's notes.
@@ -169,7 +187,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
 
   useEffect(() => {
     const s = getSettings()
-    const lanes = new LaneMap(track)
+    const lanes = new LaneMap(track, easy)
     lanesRef.current = lanes
 
     // A new router starts back at the track's own base octave, so the keyboard
@@ -194,7 +212,7 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
       lanes,
       track,
       keyboardBaseMidi: initialBase,
-      compact,
+      slots,
       onPlay: handlePlay,
       // The layout follows from the base octave via the effect below, so this
       // only has to report the shift.
@@ -314,13 +332,15 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
       router.dispose()
       transport.stop()
       setSimActive(false)
+      soundingRef.current.clear()
       transportRef.current = null
       judgeRef.current = null
       routerRef.current = null
     }
-    // A fresh run is exactly what a change of song, track or runId should cause.
+    // A fresh run is exactly what a change of song, track, keyboard or runId
+    // should cause.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chart, track, runId, compact])
+  }, [chart, track, easy, slots, runId])
 
   // ---- input ---------------------------------------------------------------
 
@@ -353,7 +373,12 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
       if (phaseRef.current === 'playing' || phaseRef.current === 'countdown') {
         judge.release(ev.lane, transport.now() + transport.audioLatencySec)
       }
-      if (s.hitSound) transport.voices.noteOff(track.instrument, { midi: ev.midi, drum: ev.drum })
+      // Silence exactly what the press started, not what the lane means now: a
+      // folded key's pitch depends on the note it claimed, so anything else
+      // would leave a voice sounding with nothing to turn it off.
+      const started = soundingRef.current.get(ev.lane) ?? [{ midi: ev.midi, drum: ev.drum }]
+      soundingRef.current.delete(ev.lane)
+      if (s.hitSound) for (const snd of started) transport.voices.noteOff(track.instrument, snd)
       return
     }
 
@@ -381,18 +406,29 @@ export function useGame(chart: Chart, track: Track, onQuit: () => void): GameApi
       }
     }
 
+    // What the press sounds: the notes it actually claimed. On the unfolded
+    // keyboards that is the lane's own pitch and nothing changes, but a folded
+    // key covers several — so the claimed note is what keeps easy mode sounding
+    // like the song rather than like eight notes of it, chords included.
+    const claimed =
+      judged === 'resumed'
+        ? judge.noteSustaining(ev.lane, at)
+        : judged
+          ? notesById.get(judged.noteId) ?? null
+          : null
+    const sounds = claimed ? soundsOf(claimed) : [lanesRef.current.soundFor(ev.lane)]
+
     // The press sounds whatever it was, hit or not, and always as the
     // instrument you chose to play — the instrument answers you even when
     // you're wrong, which is what stops it feeling like a quiz.
     if (s.hitSound && ev.lane >= 0) {
-      transport.voices.noteOn(track.instrument, {
-        midi: ev.midi,
-        drum: ev.drum,
-        volume: 0.35 + 0.65 * ev.velocity,
-      })
+      soundingRef.current.set(ev.lane, sounds)
+      for (const snd of sounds) {
+        transport.voices.noteOn(track.instrument, { ...snd, volume: 0.35 + 0.65 * ev.velocity })
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track, flashLane])
+  }, [track, flashLane, notesById])
 
   // ---- canvas --------------------------------------------------------------
 

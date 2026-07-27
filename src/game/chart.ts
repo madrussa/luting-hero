@@ -29,6 +29,12 @@ export const SIMULTANEITY_SEC = 0.012
  */
 export const MIN_PLAYABLE_NOTES = 10
 
+/** What a note sounds: a pitch, or a piece of the kit. */
+export interface NoteSound {
+  midi?: number
+  drum?: string
+}
+
 export interface GameNote {
   /** stable within a chart; the judge and the renderer both key off it */
   id: number
@@ -42,7 +48,19 @@ export interface GameNote {
   volume: number
   /** which merged voice it came from, for the "N voices merged" readout */
   voice: number
+  /**
+   * Other notes this one swallowed when a chord folded onto a single key, so
+   * easy mode still *sounds* the chord it made you press once. Absent unless
+   * the keyboard was folded — see `easy.ts`.
+   */
+  also?: NoteSound[]
 }
+
+/** Everything a note sounds, its own pitch first. */
+export const soundsOf = (note: GameNote): NoteSound[] => [
+  { midi: note.midi, drum: note.drum },
+  ...(note.also ?? []),
+]
 
 export interface Difficulty {
   /** 1..10, the headline number */
@@ -105,24 +123,41 @@ const drumOrder = (key: string): number => {
   return i === -1 ? keys.length : i
 }
 
+/** The lane a note occupies when the keyboard hasn't been folded: its own key. */
+const ownKey = (n: GameNote): number | string => n.drum ?? n.midi ?? -1
+
 /**
- * Merge notes that land on the same pitch at the same instant. Two voices
+ * Merge notes that land in the same lane at the same instant. Two voices
  * doubling a melody would otherwise put two bars in one lane, and the player
  * can only press the key once — so they collapse into a single note holding
  * the longest duration and the loudest volume.
+ *
+ * `laneOf` is what makes this reusable: with one key per pitch it merges
+ * unisons, and with easy mode's folded keyboard it merges the notes of a chord
+ * that landed under one key. Those keep sounding — the survivor remembers them
+ * in `also` — so folding changes what you press, not what you hear.
  */
-function mergeUnisons(notes: GameNote[]): GameNote[] {
+export function mergeSimultaneous(
+  notes: GameNote[],
+  laneOf: (n: GameNote) => number | string = ownKey
+): GameNote[] {
   const out: GameNote[] = []
   // notes arrive sorted by time; only scan back over the simultaneity window
   for (const n of notes) {
-    const lane = n.drum ?? n.midi
+    const lane = laneOf(n)
     let merged = false
     for (let i = out.length - 1; i >= 0; i--) {
       const p = out[i]
       if (n.timeSec - p.timeSec > SIMULTANEITY_SEC) break
-      if ((p.drum ?? p.midi) !== lane) continue
+      if (laneOf(p) !== lane) continue
       p.durSec = Math.max(p.durSec, n.durSec)
       p.volume = Math.max(p.volume, n.volume)
+      if (n.midi !== p.midi || n.drum !== p.drum) {
+        const also = (p.also ??= [])
+        if (!also.some((s) => s.midi === n.midi && s.drum === n.drum)) {
+          also.push({ midi: n.midi, drum: n.drum })
+        }
+      }
       merged = true
       break
     }
@@ -141,8 +176,18 @@ function mergeUnisons(notes: GameNote[]): GameNote[] {
  * raw — a 500-note track isn't hard if the notes are spread over five minutes,
  * and density alone would rank a fast hi-hat pattern above a slow wide-voiced
  * piano part.
+ *
+ * `laneOf` says which *key* each note falls on, for a keyboard where that isn't
+ * simply its pitch — easy mode's folded one, where several pitches share a key.
+ * Pass it and the rating is measured in keys rather than semitones, which is
+ * how a kit has always been rated: the fold is only worth doing if the number
+ * it produces reflects it.
  */
-export function rateDifficulty(notes: GameNote[], isDrums: boolean): Difficulty {
+export function rateDifficulty(
+  notes: GameNote[],
+  isDrums: boolean,
+  laneOf?: (n: GameNote) => number
+): Difficulty {
   if (notes.length === 0) {
     return { rating: 1, label: 'Empty', nps: 0, peakNps: 0, maxChord: 0, span: 0, keys: 0 }
   }
@@ -151,12 +196,23 @@ export function rateDifficulty(notes: GameNote[], isDrums: boolean): Difficulty 
   const end = notes.reduce((m, n) => Math.max(m, n.timeSec + n.durSec), 0)
   const span = Math.max(1, end - start)
 
+  // A key is what the hand actually has to reach for: the pitch, the kit piece,
+  // or the folded lane several pitches share.
+  const keyOf = (n: GameNote): number | string => laneOf?.(n) ?? n.drum ?? n.midi ?? 0
+  // On a positional keyboard every key is one of a handful sitting under the
+  // hand, so distance means nothing there and only *changing* key costs
+  // anything. That has always been true of a kit; a folded keyboard is the
+  // same instrument in that respect.
+  const positional = isDrums || laneOf !== undefined
+
   // Group into onsets so chords count once for density and once for width.
-  const onsets: { t: number; pitches: number[] }[] = []
+  const onsets: { t: number; keys: Set<number | string>; low: number }[] = []
   for (const n of notes) {
     const last = onsets[onsets.length - 1]
-    if (last && n.timeSec - last.t <= SIMULTANEITY_SEC) last.pitches.push(n.midi ?? 0)
-    else onsets.push({ t: n.timeSec, pitches: [n.midi ?? 0] })
+    if (last && n.timeSec - last.t <= SIMULTANEITY_SEC) {
+      last.keys.add(keyOf(n))
+      last.low = Math.min(last.low, n.midi ?? 0)
+    } else onsets.push({ t: n.timeSec, keys: new Set([keyOf(n)]), low: n.midi ?? 0 })
   }
 
   // Busiest one-second window, by sliding over onsets rather than sampling on a
@@ -168,23 +224,33 @@ export function rateDifficulty(notes: GameNote[], isDrums: boolean): Difficulty 
   }
 
   const nps = onsets.length / span
-  const maxChord = onsets.reduce((m, o) => Math.max(m, o.pitches.length), 0)
+  const maxChord = onsets.reduce((m, o) => Math.max(m, o.keys.size), 0)
 
   const midis = notes.map((n) => n.midi).filter((m): m is number => m !== undefined)
   const pitchSpan = midis.length ? Math.max(...midis) - Math.min(...midis) : 0
 
-  // Hand travel per second. For pitched parts that's semitones moved between
-  // consecutive onsets; for a kit it's how often the hit moves to a different
-  // pad, since the distance between pads means nothing.
+  // Hand travel per second: how far it has to move, in whatever unit the
+  // keyboard is measured in.
   let travel = 0
   if (isDrums) {
+    // On a kit the distance between pads means nothing, so all that costs
+    // anything is moving to a different one at all.
     let switches = 0
-    for (let i = 1; i < notes.length; i++) if (notes[i].drum !== notes[i - 1].drum) switches++
+    for (let i = 1; i < notes.length; i++) if (keyOf(notes[i]) !== keyOf(notes[i - 1])) switches++
     travel = Math.min(1, switches / span / 4)
+  } else if (laneOf) {
+    // A folded keyboard is measured in keys, and it is only a handful wide — so
+    // the most a hand can be asked to do is cross the whole of it twice a
+    // second, which is the same ceiling two octaves a second is below.
+    const lanes = notes.map(laneOf)
+    const laneSpan = Math.max(1, Math.max(...lanes) - Math.min(...lanes))
+    let jumped = 0
+    for (let i = 1; i < notes.length; i++) jumped += Math.abs(lanes[i] - lanes[i - 1])
+    travel = Math.min(1, jumped / span / (2 * laneSpan))
   } else {
     let jumped = 0
     for (let i = 1; i < onsets.length; i++) {
-      jumped += Math.abs(Math.min(...onsets[i].pitches) - Math.min(...onsets[i - 1].pitches))
+      jumped += Math.abs(onsets[i].low - onsets[i - 1].low)
     }
     travel = Math.min(1, jumped / span / 24) // 2 octaves of movement a second = max
   }
@@ -195,9 +261,7 @@ export function rateDifficulty(notes: GameNote[], isDrums: boolean): Difficulty 
   // harder to play, and until this was counted separately the rating couldn't
   // tell them apart. Fourteen-odd keys is about where a part stops fitting
   // under the hands.
-  const keyCount = isDrums
-    ? new Set(notes.map((n) => n.drum)).size
-    : new Set(midis).size
+  const keyCount = new Set(notes.map(keyOf)).size
   const spread = Math.min(1, Math.max(0, keyCount - 1) / 11)
 
   // Rhythmic irregularity: how many distinct inter-onset gaps appear, rounded
@@ -211,7 +275,8 @@ export function rateDifficulty(notes: GameNote[], isDrums: boolean): Difficulty 
 
   const density = Math.min(1, peakNps / 14)
   const chords = Math.min(1, (maxChord - 1) / 4)
-  const reach = Math.min(1, pitchSpan / 36)
+  // Nothing to reach for when the keys are a handful under one hand.
+  const reach = positional ? 0 : Math.min(1, pitchSpan / 36)
 
   // Span carries less weight now that the key count is measured directly — it
   // was standing in for "how much keyboard is involved", and doing it badly.
@@ -263,7 +328,7 @@ export function buildChart(text: string): Chart {
     if (!instrument) continue // a typo'd i<code>; it still plays in the backing
 
     const sorted = [...group].sort((a, b) => a.timeSec - b.timeSec)
-    const merged = mergeUnisons(
+    const merged = mergeSimultaneous(
       sorted.map((n) => ({
         id: 0,
         timeSec: n.timeSec,

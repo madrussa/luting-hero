@@ -12,7 +12,8 @@ import type { MidiNoteEvent } from '../luting-core/midi'
 import { drumKeyForMidi } from './liveVoice'
 import { OCTAVE_DOWN_KEY, OCTAVE_UP_KEY, isTypingTarget } from './keymap'
 import { getBindings } from './bindings'
-import type { Track } from './chart'
+import type { NoteSound, Track } from './chart'
+import type { EasyMap } from './easy'
 
 export type InputSource = 'midi' | 'screen' | 'keyboard'
 
@@ -33,27 +34,42 @@ export interface PlayEvent {
  * kit track's is the position of that drum in the song's own kit, so a snare in
  * a two-piece song and a snare in a full-kit song are different lanes and each
  * song's pads sit next to each other.
+ *
+ * Easy mode folds several pitches (or kit pieces) onto one key, so there the
+ * lane is the key's position and the fold decides which notes reach it. That is
+ * the whole extent of what the rest of the game needs to know about folding.
  */
 export class LaneMap {
   private readonly drumLane = new Map<string, number>()
 
-  constructor(private readonly track: Track) {
+  constructor(
+    private readonly track: Track,
+    private readonly easy: EasyMap | null = null
+  ) {
     track.drums.forEach((d, i) => this.drumLane.set(d, i))
   }
 
   /** The lane a chart note occupies. */
-  laneOfNote = (note: { midi?: number; drum?: string }): number =>
-    note.drum ? (this.drumLane.get(note.drum) ?? -1) : (note.midi ?? -1)
-
-  /** The lane an incoming MIDI note lands in, or -1 if this kit has no such drum. */
-  laneOfMidi(midi: number): number {
-    if (!this.track.isDrums) return midi
-    const key = drumKeyForMidi(midi)
-    return key ? (this.drumLane.get(key) ?? -1) : -1
+  laneOfNote = (note: NoteSound): number => {
+    if (this.easy) return this.easy.laneOf(note)
+    return note.drum ? (this.drumLane.get(note.drum) ?? -1) : (note.midi ?? -1)
   }
 
-  /** What a lane should sound when played. */
-  soundFor(lane: number): { midi?: number; drum?: string } {
+  /** The lane an incoming MIDI note lands in, or -1 if nothing here answers to it. */
+  laneOfMidi(midi: number): number {
+    if (!this.track.isDrums) return this.easy ? this.easy.laneOfMidi(midi) : midi
+    const key = drumKeyForMidi(midi)
+    if (!key) return -1
+    return this.easy ? this.easy.laneOf({ drum: key }) : (this.drumLane.get(key) ?? -1)
+  }
+
+  /**
+   * What a lane should sound when played, knowing nothing about the chart. On a
+   * folded key that's the pitch it plays most — the caller can do better once
+   * the judge has said which note the press actually claimed.
+   */
+  soundFor(lane: number): NoteSound {
+    if (this.easy) return this.easy.keys[lane]?.voice ?? {}
     return this.track.isDrums ? { drum: this.track.drums[lane] } : { midi: lane }
   }
 }
@@ -63,8 +79,12 @@ export interface InputRouterOptions {
   track: Track
   /** lowest key drawn on the on-screen instrument, for the keyboard binding */
   keyboardBaseMidi: number
-  /** easy mode: keys address the part's own pitches by position */
-  compact: boolean
+  /**
+   * slot -> lane on a positional keyboard, or null on the chromatic one, where
+   * a computer key means a semitone offset from the base octave instead. Build
+   * it with `keyboardSlots` so the drawn keyboard agrees.
+   */
+  slots: number[] | null
   onPlay: (ev: PlayEvent) => void
   /** the computer keyboard shifted its octave; the UI follows it */
   onOctaveShift?: (baseMidi: number) => void
@@ -114,7 +134,7 @@ export class InputRouter {
 
   /** Move the computer keyboard's base octave, from the arrow keys or the HUD. */
   shiftOctave(delta: number): void {
-    if (this.opts.track.isDrums || this.opts.compact) return
+    if (this.opts.slots) return // positional keys name their own notes: nothing to shift
     this.releaseAll() // held keys would otherwise note-off at the new pitch
     this.baseMidi = Math.max(12, Math.min(108, this.baseMidi + delta))
     this.opts.onOctaveShift?.(this.baseMidi)
@@ -140,8 +160,8 @@ export class InputRouter {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget()) return
     const k = e.key.toLowerCase()
 
-    // Nothing to shift when the keys already name the part's own pitches.
-    if (!this.opts.track.isDrums && !this.opts.compact && (k === OCTAVE_DOWN_KEY || k === OCTAVE_UP_KEY)) {
+    // Nothing to shift when the keys already name the part's own notes.
+    if (!this.opts.slots && (k === OCTAVE_DOWN_KEY || k === OCTAVE_UP_KEY)) {
       e.preventDefault()
       this.shiftOctave(k === OCTAVE_UP_KEY ? 12 : -12)
       return
@@ -169,15 +189,13 @@ export class InputRouter {
    */
   private laneForKey(k: string): number | null {
     const b = getBindings()
-    const { track, compact } = this.opts
-    if (track.isDrums) {
-      const pad = b.drums[k]
-      return pad !== undefined && pad < track.drums.length ? pad : null
-    }
-    if (compact) {
-      // The lane is still the pitch; only the way a key names it changes.
-      const i = b.compact[k]
-      return i !== undefined && i < track.pitches.length ? track.pitches[i] : null
+    const { track, slots } = this.opts
+    if (slots) {
+      // A positional keyboard: the binding is a slot, and the slot names the
+      // lane. Kits keep their own map, since a five-pad kit and a twenty-key
+      // keyboard want the keys spread differently.
+      const i = b[track.isDrums ? 'drums' : 'compact'][k]
+      return i !== undefined && i < slots.length ? slots[i] : null
     }
     const semi = b.piano[k]
     return semi === undefined ? null : this.baseMidi + semi

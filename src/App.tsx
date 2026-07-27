@@ -10,7 +10,8 @@ import type { LibrarySong } from './game/library'
 import type { Stats } from './game/judge'
 import { toggleTheme, useSettings } from './game/settings'
 import { lutingHash } from './game/hash'
-import { emptyRecord, loadSongRecord, saveSongRecord, withBest } from './game/songStore'
+import { playableTrack } from './game/easy'
+import { bestKey, emptyRecord, loadSongRecord, saveSongRecord, withBest } from './game/songStore'
 import { enterSongScope, leaveSongScope } from './game/bindings'
 import type { SongRecord } from './game/songStore'
 import { accuracy, grade } from './game/judge'
@@ -48,6 +49,16 @@ export default function App() {
   // Parsing is the expensive step, so it happens once per song rather than on
   // every screen change.
   const chart = useMemo(() => (song ? buildChart(song.text) : null), [song])
+
+  // The chosen keyboard decides what the part actually is: easy mode folds it
+  // onto at most eight keys and merges the notes that share one. Everything
+  // downstream — the judge, the highway, the score, the results — sees the
+  // folded part and nothing else, which is why it is resolved here, once,
+  // rather than by each of them.
+  const play = useMemo(
+    () => (track ? playableTrack(track, settings.keyboard) : null),
+    [track, settings.keyboard]
+  )
 
   const pickSong = (s: LibrarySong) => {
     setSong(s)
@@ -90,9 +101,12 @@ export default function App() {
     (s: Stats) => {
       setStats(s)
       setScreen('results')
-      if (!record || !track) return
-      const total = track.notes.length
-      const next = withBest(record, track.instrument, {
+      if (!record || !play) return
+      const total = play.track.notes.length
+      // Bests are kept per keyboard, not just per instrument: the same part on
+      // eight folded keys and on the full chromatic keyboard are different
+      // things to have done, and a score from one says nothing about the other.
+      const next = withBest(record, bestKey(play.track.instrument, settings.keyboard), {
         score: s.score,
         grade: grade(s, total),
         accuracy: accuracy(s, total),
@@ -103,7 +117,7 @@ export default function App() {
       setRecord(next)
       void saveSongRecord(next)
     },
-    [record, track]
+    [record, play, settings.keyboard]
   )
 
   const playing = screen === 'play'
@@ -159,24 +173,25 @@ export default function App() {
         />
       )}
 
-      {screen === 'play' && chart && track && song && (
+      {screen === 'play' && chart && play && song && (
         <Suspense fallback={<div className="loading-stage">Warming up the highway…</div>}>
           <GameScreen
             key={runKey}
             chart={chart}
-            track={track}
+            track={play.track}
+            easy={play.easy}
             songTitle={song.title}
-            best={record?.best[track.instrument]}
+            best={record?.best[bestKey(play.track.instrument, settings.keyboard)]}
             onQuit={() => setScreen('instruments')}
             onFinish={onFinish}
           />
         </Suspense>
       )}
 
-      {screen === 'results' && stats && track && song && (
+      {screen === 'results' && stats && play && song && (
         <Results
           stats={stats}
-          track={track}
+          track={play.track}
           songTitle={song.title}
           onRetry={() => {
             setRunKey((n) => n + 1)

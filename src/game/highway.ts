@@ -116,6 +116,18 @@ const HIT_FLASH_SEC = 0.22
  * length of the highway says something about the music that isn't true.
  */
 const DRUM_NOTE_LEN = 0.9
+
+/**
+ * How much silence in front of a note counts as "no seam you can see", and so
+ * earns it a strike mark — as a fraction of the approach, because that is what
+ * the runway's whole length is. A twentieth of the screen's worth of gap is a
+ * few pixels at the far end and still thin where it matters, which is exactly
+ * the case where a run of notes on one key reads as a single held bar.
+ */
+const MARK_GAP = 0.05
+
+/** The biggest a strike mark gets, whatever the lane is wide. */
+const MARK_MAX_SIZE = 0.8
 const STRIKE_SEC = 0.4
 const BURST_SEC = 0.45
 
@@ -153,6 +165,8 @@ interface Palette {
   bar: THREE.Color
   strikeHit: THREE.Color
   strikeMiss: THREE.Color
+  /** what a note's colour is pushed toward for its strike mark: the dark behind it */
+  mark: THREE.Color
   burstPerfect: THREE.Color
   burstOther: THREE.Color
 }
@@ -295,6 +309,8 @@ export class Highway {
 
   private notes!: THREE.InstancedMesh
   private glow!: THREE.InstancedMesh
+  /** one disc per note that follows another too closely to see the seam */
+  private strikeMarks!: THREE.InstancedMesh
   private beats!: THREE.InstancedMesh
   private strikes!: THREE.InstancedMesh
   private bursts!: THREE.InstancedMesh
@@ -316,6 +332,7 @@ export class Highway {
    */
   private readonly dummy = new THREE.Object3D()
   private readonly scratch = new THREE.Color()
+  private readonly markInk = new THREE.Color()
   private readonly probe = new THREE.Vector3()
 
   private opts: HighwayOptions
@@ -323,6 +340,8 @@ export class Highway {
   /** lane id -> lane, rebuilt only when the layout changes */
   private laneById: Map<number, Layout['lanes'][number]>
   private states: NoteState[] = []
+  /** seconds of silence before each note in its own lane; see setNotes */
+  private gapBefore: number[] = []
   /** index of the earliest note still worth drawing */
   private cursor = 0
   /** lane -> the most recent judgement there, for the lane flash */
@@ -396,6 +415,7 @@ export class Highway {
       bar: over(t.floor, t.ink, t.barAlpha),
       strikeHit: new THREE.Color(t.noteA),
       strikeMiss: new THREE.Color(t.missed),
+      mark: new THREE.Color(t.bg),
       burstPerfect: new THREE.Color(t.noteB),
       burstOther: new THREE.Color(t.noteA),
     }
@@ -492,6 +512,23 @@ export class Highway {
     )
     this.glow.frustumCulled = false
     this.scene.add(this.glow)
+
+    // The strike marks that sit on top of the bars. A disc, not a line across
+    // the bar: a line reads as the seam it is trying to point out, where a disc
+    // reads as a thing to hit.
+    //
+    // Marked transparent although it is opaque, purely to put it in the
+    // transparent pass *after* the note bloom — an additive glow drawn over the
+    // mark would wash out exactly the contrast the mark is made of, and on a big
+    // combo the flames make that worse, not better.
+    this.strikeMarks = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(0.5, 14),
+      new THREE.MeshBasicMaterial({ fog: true, transparent: true, depthWrite: false }),
+      MAX_NOTES
+    )
+    this.strikeMarks.frustumCulled = false
+    this.strikeMarks.renderOrder = 2
+    this.scene.add(this.strikeMarks)
   }
 
   /**
@@ -1031,6 +1068,18 @@ export class Highway {
     // forward walk rather than a scan of the whole chart every frame.
     this.states = states
     this.cursor = 0
+
+    // How much silence sits in front of each note in its own lane. A run of
+    // notes on one key with no gaps between them draws as one unbroken bar —
+    // the seam where you have to strike again is a line a pixel wide, if that —
+    // so each note that follows another closely gets a strike mark. Precomputed
+    // here: it's a property of the chart, not of the frame.
+    const lastEnd = new Map<number, number>()
+    this.gapBefore = states.map((s) => {
+      const end = lastEnd.get(s.lane)
+      lastEnd.set(s.lane, s.note.timeSec + s.note.durSec)
+      return end === undefined ? Infinity : s.note.timeSec - end
+    })
   }
 
   /** Hand over the band: who's playing behind you, and every note they play. */
@@ -1298,6 +1347,7 @@ export class Highway {
     }
 
     let n = 0
+    let marks = 0
     for (let i = this.cursor; i < this.states.length && n < MAX_NOTES; i++) {
       const s = this.states[i]
       const lead = s.note.timeSec - t
@@ -1385,6 +1435,46 @@ export class Highway {
       this.notes.setColorAt(n, this.scratch)
       this.glow.setColorAt(n, this.scratch)
 
+      // The strike mark: where you have to press *again*.
+      //
+      // Two notes on one key with no daylight between them draw as a single
+      // unbroken bar — the seam is a line a pixel wide at best, and by the time
+      // it is close enough to see you have already missed the second note. So a
+      // note whose seam is too thin to read gets a disc at its leading edge.
+      // Only until it's judged: once you've played it the mark has done its job,
+      // and leaving it there would clutter the sustain you're still holding.
+      if (marks < MAX_NOTES && z < 0 && !s.verdict && this.gapBefore[i] < approachSec * MARK_GAP) {
+        // Sized in world units as well as lane widths: a two-lane part has
+        // lanes five units wide, and a mark scaled only to the lane would be a
+        // dinner plate. A third of the bar's width, and never more than this,
+        // reads as a marking on the note at any lane count.
+        const w = Math.min(lane.width * WIDTH * 0.28, MARK_MAX_SIZE, visibleLen * 0.5)
+        // Lying on the floor, anything is foreshortened along z — so the disc is
+        // stretched back to read round from where the player is sitting, up to a
+        // point: past about half again it stops being a circle and starts being
+        // a smear down the lane.
+        const len = Math.min(w * 1.45, visibleLen * 0.6)
+        this.dummy.rotation.set(-Math.PI / 2, 0, 0)
+        this.dummy.position.set(
+          this.laneX(lane.center),
+          NOTE_Y + (lane.black ? 0.05 : 0) + NOTE_THICKNESS / 2 + 0.006,
+          z - len / 2
+        )
+        this.dummy.scale.set(w, len, 1)
+        this.dummy.updateMatrix()
+        this.strikeMarks.setMatrixAt(marks, this.dummy.matrix)
+        // Dark, and a fixed fraction of whatever the bar is doing — so it holds
+        // the same contrast whether the bar is dim at the far end, dropped to
+        // 30%, or white-hot in the middle of a combo. Going *lighter* was the
+        // obvious choice and the wrong one: the fire takes the notes to white,
+        // and a pale mark disappears into exactly the streak you most want to
+        // keep. Keeping a trace of the note's own hue stops it reading as a hole
+        // in the bar.
+        this.markInk.copy(this.scratch).lerp(p.mark, 0.72)
+        this.strikeMarks.setColorAt(marks, this.markInk)
+        marks++
+      }
+
       // Flames standing up off the note. Vertical and tilted to face the
       // camera, not lying on the floor: a flat wash reads as a stain on the
       // track, and the thing that makes fire look like fire is that it rises.
@@ -1439,6 +1529,10 @@ export class Highway {
     this.glow.instanceMatrix.needsUpdate = true
     if (this.notes.instanceColor) this.notes.instanceColor.needsUpdate = true
     if (this.glow.instanceColor) this.glow.instanceColor.needsUpdate = true
+
+    this.strikeMarks.count = marks
+    this.strikeMarks.instanceMatrix.needsUpdate = true
+    if (this.strikeMarks.instanceColor) this.strikeMarks.instanceColor.needsUpdate = true
   }
 
   private drawBeats(t: number): void {

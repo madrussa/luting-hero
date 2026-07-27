@@ -11,16 +11,20 @@ import { PIANO_KEYS, DRUM_KEY_ORDER } from './keymap'
 /**
  * `piano` maps a key to a semitone offset from the base octave — the full
  * chromatic keyboard. `compact` and `drums` map a key to a *position*: the nth
- * pitch the part plays, or the nth piece of the kit. Positional maps are kept
- * apart because a five-pad kit and a twenty-note compact keyboard want the keys
- * spread differently.
+ * key drawn, or the nth piece of the kit. Positional maps are kept apart
+ * because a five-pad kit and a twenty-key keyboard want the keys spread
+ * differently.
+ *
+ * Being positional is what lets one map serve both melodic keyboards that are
+ * drawn that way: the eight folded keys of easy mode are the first eight slots
+ * of the same map hard mode spreads over every pitch in the part.
  */
 export type BindingKind = 'piano' | 'compact' | 'drums'
 
 export interface Bindings {
   /** computer key -> semitone offset from the base octave */
   piano: Record<string, number>
-  /** computer key -> index into the pitches the part plays (easy mode) */
+  /** computer key -> which drawn key, left to right (the folded and per-pitch keyboards) */
   compact: Record<string, number>
   /** computer key -> pad index */
   drums: Record<string, number>

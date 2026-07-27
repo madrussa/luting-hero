@@ -1,7 +1,7 @@
 // Choosing which instrument to play. Every track here is one instrument's
 // whole part, however many luting voices it was written across.
 
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square, Copy, Check } from 'lucide-react'
 import type { SongRecord } from './songStore'
 import { toLuteFile } from './library'
@@ -18,6 +18,10 @@ import {
 } from '../luting-core/player'
 import { getPlaybackMode, loadBank } from '../luting-core/samples'
 import { updateSettings, useSettings } from './settings'
+import type { KeyboardMode } from './settings'
+import { MAX_EASY_KEYS, playableTrack } from './easy'
+import type { EasyMap } from './easy'
+import { bestKey } from './songStore'
 import conducting from '../assets/conducting.webp'
 
 interface Props {
@@ -35,6 +39,35 @@ const PREVIEW_ID = 'song-preview'
 
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/**
+ * What this part will ask your hands for on the chosen keyboard: how many keys,
+ * and — when they were folded to get there — how many pitches went onto them.
+ * The fold is the whole reason easy mode exists, so it says so out loud rather
+ * than quietly drawing a smaller keyboard.
+ */
+function describeKeys(track: Track, easy: EasyMap | null, mode: KeyboardMode): string {
+  if (easy) {
+    const covered = track.isDrums ? track.drums.length : track.pitches.length
+    const keys = plural(easy.keys.length, track.isDrums ? 'pad' : 'key')
+    const folded = easy.keys.some((k) => k.folded)
+      ? ` · ${covered} ${track.isDrums ? 'pieces' : 'pitches'} folded in`
+      : ''
+    return track.isDrums
+      ? `${keys}: ${easy.keys.map((k) => k.label).slice(0, 4).join(', ')}${easy.keys.length > 4 ? '…' : ''}${folded}`
+      : `${keys} · ${noteName(track.lowMidi)}–${noteName(track.highMidi)}${folded}`
+  }
+  if (track.isDrums) {
+    const names = track.drums.slice(0, 4).map((k) => DRUM_SOUNDS[k]?.name ?? k)
+    return `${plural(track.drums.length, 'kit piece')}: ${names.join(', ')}${track.drums.length > 4 ? '…' : ''}`
+  }
+  const range = `${noteName(track.lowMidi)}–${noteName(track.highMidi)}`
+  return mode === 'hard'
+    ? `${plural(track.pitches.length, 'key')} · ${range}`
+    : `${range} · ${track.difficulty.span} semitones`
+}
+
 function Stars({ rating }: { rating: number }) {
   return (
     <span className="stars" title={`${rating} of 10`} aria-label={`Difficulty ${rating} of 10`}>
@@ -46,9 +79,20 @@ function Stars({ rating }: { rating: number }) {
 }
 
 export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props) {
-  const sorted = [...chart.tracks].sort((a, b) => a.difficulty.rating - b.difficulty.rating)
   const { keyboard } = useSettings()
   const [copied, setCopied] = useState(false)
+
+  // Every card describes the part *as the chosen keyboard will ask for it*.
+  // That matters most in easy mode, where the fold genuinely changes the part —
+  // fewer keys, chords collapsed, a lower rating — and a card still quoting the
+  // unfolded numbers would be describing a mode you aren't about to play.
+  const cards = useMemo(
+    () =>
+      chart.tracks
+        .map((source) => ({ source, ...playableTrack(source, keyboard) }))
+        .sort((a, b) => a.track.difficulty.rating - b.track.difficulty.rating),
+    [chart, keyboard]
+  )
 
   // Which instrument is being auditioned. In sample mode the preview waits for
   // that instrument's pack, so this doubles as the spinner — and warms the pack
@@ -150,13 +194,14 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
         <img src={conducting} alt="" className="picker-mascot" />
       </div>
 
-      {/* Easy is the default: most parts touch a fraction of their range, and
-          the keys they never touch are only there to be missed. */}
+      {/* Easy is the default. Most parts ask for more keys than one hand can
+          hold, and a part you can't physically reach isn't a difficulty. */}
       <div className="mode-switch" role="radiogroup" aria-label="Keyboard">
         {(
           [
-            ['easy', 'Easy', 'only the keys the part plays'],
-            ['full', 'Hard', 'the full keyboard across its range'],
+            ['easy', 'Easy', `at most ${MAX_EASY_KEYS} keys, chords folded onto one`],
+            ['hard', 'Hard', 'one key per note the part plays'],
+            ['impossible', 'Impossible', 'the full keyboard across its range'],
           ] as const
         ).map(([value, label, hint]) => (
           <button
@@ -182,8 +227,9 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
       )}
 
       <div className="track-grid">
-        {sorted.map((t) => {
+        {cards.map(({ source, track: t, easy }) => {
           const d = t.difficulty
+          const best = record?.best[bestKey(t.instrument, keyboard)]
           return (
             // A div wrapping two buttons, not one button: the audition control
             // has to be independently clickable, and a button inside a button
@@ -192,7 +238,9 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
               key={t.instrument}
               className={`track-card ${record?.lastInstrument === t.instrument ? 'last-played' : ''}`}
             >
-              <button type="button" className="track-pick" onClick={() => onPick(t)}>
+              {/* The unfolded part is what's picked: the fold is a property of
+                  the keyboard, and is re-derived from the setting downstream. */}
+              <button type="button" className="track-pick" onClick={() => onPick(source)}>
               <span className="track-icon" aria-hidden="true">
                 {t.icon}
               </span>
@@ -213,23 +261,13 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
                   {t.notes.length.toLocaleString()} notes · {d.nps}/s avg, {d.peakNps}/s peak
                   {d.maxChord > 1 && ` · up to ${d.maxChord} at once`}
                 </span>
-                {record?.best[t.instrument] && (
+                {best && (
                   <span className="track-best">
-                    <Trophy size={11} /> {record.best[t.instrument].score.toLocaleString()} ·{' '}
-                    {record.best[t.instrument].grade} ·{' '}
-                    {(record.best[t.instrument].accuracy * 100).toFixed(0)}%
+                    <Trophy size={11} /> {best.score.toLocaleString()} · {best.grade} ·{' '}
+                    {(best.accuracy * 100).toFixed(0)}%
                   </span>
                 )}
-                <span className="track-range">
-                  {t.isDrums
-                    ? `${t.drums.length} kit piece${t.drums.length === 1 ? '' : 's'}: ${t.drums
-                        .slice(0, 4)
-                        .map((k) => DRUM_SOUNDS[k]?.name ?? k)
-                        .join(', ')}${t.drums.length > 4 ? '…' : ''}`
-                    : keyboard === 'easy'
-                      ? `${t.pitches.length} key${t.pitches.length === 1 ? '' : 's'} · ${noteName(t.lowMidi)}–${noteName(t.highMidi)}`
-                      : `${noteName(t.lowMidi)}–${noteName(t.highMidi)} · ${d.span} semitones`}
-                </span>
+                <span className="track-range">{describeKeys(t, easy, keyboard)}</span>
               </span>
                 <span className="track-go" aria-hidden="true">
                   <Play size={16} />

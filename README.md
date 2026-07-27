@@ -26,10 +26,13 @@ npm test
   the picker is really parsed, so the note counts and durations shown are the
   real ones.
 - **Pick an instrument** — each one is rated 1–10 for difficulty from what it
-  actually asks of you. **Preview song** plays the whole arrangement, and the
-  speaker on each card auditions that instrument alone. Parts with fewer than
-  ten notes aren't offered: picking a two-note triangle is a minute of watching
-  someone else's song. They still play in the backing.
+  actually asks of you *on the keyboard you picked*, which is also on this
+  screen: **Easy** folds the part onto eight keys, **Hard** gives it one key per
+  note it plays, **Impossible** gives it the whole chromatic keyboard.
+  **Preview song** plays the whole arrangement, and the speaker on each card
+  auditions that instrument alone. Parts with fewer than ten notes aren't
+  offered: picking a two-note triangle is a minute of watching someone else's
+  song. They still play in the backing.
 - **Play it** — notes fall down a 3D highway onto the keyboard. Hit them as
   they cross the line. Everything you didn't pick keeps playing behind you.
 
@@ -62,6 +65,10 @@ The keyboard is rounded out to whole octaves around the part's range, so a wide
 part gets a wide keyboard. `src/game/lanes.ts` is the single source of lane
 geometry — the 3D scene and the DOM instrument both read it, which is what keeps
 every key exactly under its lane at any window size.
+
+Where a lane stops being a pitch is the folded keyboard, below: there it is a
+key's *position*, as it always has been on a kit. Everything that reads a lane
+reads it as an opaque id, so that costs nothing.
 
 ### The camera angle is the reaction-time control
 
@@ -114,20 +121,82 @@ not "how loud is it". A two-note triangle part gets a wave as tall as the bass.
 The rails also pulse with the backing drums, and the far end of the highway
 glows in the blend of whatever is currently sounding.
 
-### Easy mode: only the keys the part plays
+### Three keyboards, and eight keys at the easy end
 
 Most parts touch a fraction of their range — Gerudo Valley's bass covers 45
 semitones but visits **17 notes**, and its percussion part plays 480 notes on a
-single pitch. The keys in between are only there to be missed.
+single pitch. The keys in between are only there to be missed. So the picker
+offers three keyboards:
 
-**Easy** (the default) therefore draws one equal-width key per pitch the part
-actually plays, and the highway's lanes follow. **Hard** draws the full
-chromatic keyboard across the range. The switch is on the instrument picker.
+| | |
+| --- | --- |
+| **Easy** (default) | The part folded onto **at most eight keys**, with the notes that share one merged. |
+| **Hard** | One equal-width key per pitch the part actually plays. |
+| **Impossible** | The full chromatic keyboard across the part's range. |
 
-The lane is still the MIDI note in both modes, so the judge, the chart and MIDI
-input are untouched — only which keys get drawn, and where. What does change is
-the *binding* model: easy mode names keys by position (the nth pitch), so it has
-its own map, and there is no octave to shift.
+Drawing only the pitches a part plays was already a big cut, but "only the
+pitches it plays" is still seventeen keys for a bass line and more for anything
+chordal. That is fine on a controller and hopeless on a computer keyboard, where
+about eight keys is what one hand holds without moving — and owning the hardware
+shouldn't be the price of admission. Hence the fold, in `src/game/easy.ts`.
+
+**How it folds.** Neighbouring pitches are grouped until at most eight keys are
+left, minimising how far each note sits from the centre of its group *weighted
+by how often it is played*. That is one-dimensional k-means with an order
+constraint, which a dynamic program solves exactly — so the same part always
+folds the same way, and a pitch struck three hundred times is never merged away
+to spare a key for one struck twice. Groups are contiguous, so going up in the
+part still means going right on the keyboard; a fold that sorted by anything
+else would be a different song. Kits fold the same way but by *piece*, in kit
+order, so the kick stays leftmost.
+
+**A chord that fits under one key becomes one press.** That falls out of the
+fold rather than being a second mechanism: `mergeSimultaneous` already collapsed
+two voices doubling a pitch, because you can only press a key once, and a folded
+keyboard just gives it more pairs to collapse.
+
+**What you hear is not folded.** A press sounds the notes it actually
+*claimed* — the real pitch, and the whole chord where a chord folded onto that
+key — which is why the judge can say which note a press took. Easy mode changes
+what you press, never what the song is.
+
+The lane stops being the MIDI note here: on a folded keyboard it is the key's
+position, exactly as it has always been on a kit. That is the only thing the
+judge, the highway and the input router know about any of this — `LaneMap`
+answers "which lane" and "what does it sound", and nothing downstream has to
+learn that a fold happened.
+
+Bindings stay positional (the nth key drawn), so one map serves both melodic
+keyboards: easy mode's eight keys are the first eight slots of the map hard mode
+spreads over every pitch. With the factory layout that is <kbd>A</kbd>–<kbd>K</kbd>,
+the home row exactly. There is no octave to shift in either.
+
+**Best scores are kept per keyboard**, because the same part on eight folded keys
+and on the full chromatic keyboard are different things to have done, with
+different note counts, and a score from one says nothing about the other.
+
+### Where the seam is invisible, a strike mark
+
+Two notes on one key with no rest between them draw as a single unbroken bar.
+The seam where you have to strike again is a line a pixel wide, and by the time
+it is close enough to see, the second note has gone. Folding a part onto eight
+keys makes this the common case rather than the odd one, because far more of the
+part now shares a key.
+
+So a note whose gap from the one before it — in its own lane — is under a
+twentieth of the approach gets a **disc at its leading edge**: the moment to
+press again. A disc rather than a line across the bar, because a line reads as
+the very seam it is pointing out. It goes away once the note is judged, so it
+never clutters a sustain you are already holding.
+
+The disc is **darker** than the bar, not lighter, which is the opposite of the
+obvious choice. Lighter was tried first and it disappears exactly when it is
+most needed: past a combo of 10 the notes catch fire and go white at the core,
+and a pale mark is swallowed by the streak. Dark holds up against a bar that is
+dim at the horizon, dropped to 30%, or white-hot — it is a fixed fraction of
+whatever the bar is doing, so the contrast is the same in all of them. It also
+has to be drawn *after* the note bloom, or the additive glow washes out the one
+thing it is made of.
 
 ### The highway catches fire
 
@@ -162,8 +231,16 @@ them apart — Gerudo Valley's one-pad 300-note drum part now reads Beginner whi
 its 17-key bass reads Hard. Sparse parts are still held back however far they
 leap.
 
-Difficulty rates the part; it never rewrites it. There are no easy/medium charts
-that drop notes — what you see is what the luting says.
+It rates **the part on the keyboard you chose**, because that is the thing in
+front of you: fold seventeen keys onto eight and the same bass line drops from
+Hard to Easy, chords included, and a card still quoting the unfolded numbers
+would be describing a mode you aren't about to play. On a positional keyboard —
+a kit, or a fold — the rating is measured in keys rather than semitones, since
+every key is already under one hand.
+
+Difficulty never rewrites the *music*. Nothing drops notes to make a chart
+easier; the most easy mode does is merge two notes you could only have pressed
+as one, and you still hear both.
 
 ### Real samples, loaded before the count-in
 

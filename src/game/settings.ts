@@ -7,6 +7,29 @@ import { setPlaybackMode } from '../luting-core/samples'
 
 export type Theme = 'dark' | 'light'
 
+/**
+ * How much keyboard a part is drawn on — the one setting that changes what
+ * playing it asks of you.
+ *
+ * `easy` folds the part onto at most eight keys, merging the pitches that share
+ * one; `hard` draws a key per pitch the part plays; `impossible` draws the full
+ * chromatic keyboard across its range, most of which exists only to be missed.
+ */
+export type KeyboardMode = 'easy' | 'hard' | 'impossible'
+
+/**
+ * There used to be two modes, `easy` and `full`. The fold arrived underneath
+ * the first of them and kept its name, so anyone who was on it lands on the
+ * folded keyboard — which is the default now, and one click from Hard. `full`
+ * is the one worth preserving: it was chosen deliberately, and it is exactly
+ * what `impossible` is.
+ */
+export function normaliseKeyboard(value: unknown): KeyboardMode {
+  if (value === 'easy' || value === 'hard' || value === 'impossible') return value
+  if (value === 'full') return 'impossible'
+  return DEFAULTS.keyboard
+}
+
 /** Judging windows in milliseconds, widest ("Good") first. */
 export interface HitWindow {
   id: string
@@ -34,11 +57,8 @@ export interface Settings {
   approachSec: number
   /** camera tilt in degrees; steeper spreads the approach more evenly */
   cameraPitch: number
-  /**
-   * 'easy' draws only the keys the part actually plays; 'full' draws the whole
-   * chromatic keyboard across its range.
-   */
-  keyboard: 'easy' | 'full'
+  /** how much keyboard the part is folded onto; see KeyboardMode */
+  keyboard: KeyboardMode
   hitWindow: string
   /** shift every judgement by this many ms to compensate for output latency */
   offsetMs: number
@@ -62,8 +82,8 @@ const DEFAULTS: Settings = {
   // original 34° the first half of every approach was squeezed into 17% of the
   // screen — notes were a smudge at the horizon and then arrived all at once.
   cameraPitch: 44,
-  // Most parts use a fraction of their range, and the unused keys are only
-  // there to be missed — so the compact keyboard is the default.
+  // Most parts ask for more keys than a hand covers, and a part you can't reach
+  // isn't a difficulty setting — so the folded keyboard is the default.
   keyboard: 'easy',
   hitWindow: 'normal',
   offsetMs: 0,
@@ -89,7 +109,8 @@ let settings: Settings = (() => {
     if (!raw) return { ...DEFAULTS }
     // Merge over the defaults so a settings blob written by an older build
     // (missing keys added since) still loads instead of yielding undefineds.
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) }
+    const saved = JSON.parse(raw) as Partial<Settings>
+    return { ...DEFAULTS, ...saved, keyboard: normaliseKeyboard(saved.keyboard) }
   } catch {
     return { ...DEFAULTS }
   }

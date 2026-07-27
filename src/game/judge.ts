@@ -328,6 +328,16 @@ export class Judge {
     return s
   }
 
+  /**
+   * The note a lane is sounding right now — what a press there takes hold of.
+   * The caller needs it to know what to *play*: on easy mode's folded keyboard
+   * a key covers several pitches, so which note is sustaining decides which
+   * pitch a re-grab sounds.
+   */
+  noteSustaining(lane: number, atSec: number): GameNote | null {
+    return this.sustaining(lane, atSec - this.offsetSec)?.note ?? null
+  }
+
   private resume(lane: number, t: number): boolean {
     const s = this.sustaining(lane, t)
     if (!s || s.holdingFrom !== undefined) return false

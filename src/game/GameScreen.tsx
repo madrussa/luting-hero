@@ -15,12 +15,16 @@ import { useGame } from './useGame'
 import { useSettings } from './settings'
 import { noteName } from './lanes'
 import type { Chart, Track } from './chart'
+import type { EasyMap } from './easy'
 import type { Stats } from './judge'
 import mascot from '../assets/luting.webp'
 
 interface Props {
   chart: Chart
+  /** the part as it will be played: folded, in easy mode */
   track: Track
+  /** the fold that made it, or null on the keyboards where a lane is the pitch */
+  easy: EasyMap | null
   songTitle: string
   /** your best previous run on this instrument, if this song has been played */
   best?: SongBest
@@ -28,8 +32,8 @@ interface Props {
   onFinish: (stats: Stats) => void
 }
 
-export function GameScreen({ chart, track, songTitle, best, onQuit, onFinish }: Props) {
-  const game = useGame(chart, track, onQuit)
+export function GameScreen({ chart, track, easy, songTitle, best, onQuit, onFinish }: Props) {
+  const game = useGame(chart, track, easy, onQuit)
   const settings = useSettings()
   const [showSettings, setShowSettings] = useState(false)
   // Remapping only happens at the gate, and the instrument is the surface for
@@ -49,19 +53,11 @@ export function GameScreen({ chart, track, songTitle, best, onQuit, onFinish }: 
   const paused = game.phase === 'paused'
 
   // Which binding slot a lane sits in, for click-to-remap on the instrument.
-  // Every drawn key has one: offsets run negative as well as positive, so a
-  // note below the home row is bound like any other rather than being out of
-  // reach until you shift the octave.
-  const slotOf = (lane: number): number | null => {
-    if (track.isDrums) return lane
-    // Easy mode names keys by position in the part's own pitches, so that's
-    // what a click has to select.
-    if (game.layout.compact) {
-      const i = track.pitches.indexOf(lane)
-      return i === -1 ? null : i
-    }
-    return lane - game.computerBaseMidi
-  }
+  // The layout already knows — it had to, to label the key — and taking it from
+  // there is what keeps a click, the label and the router naming the same slot
+  // on every kind of keyboard.
+  const slotOf = (lane: number): number | null =>
+    game.layout.lanes.find((l) => l.lane === lane)?.slot ?? null
 
   return (
     <div className="game">

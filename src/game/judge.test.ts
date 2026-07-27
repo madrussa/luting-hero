@@ -236,6 +236,16 @@ describe('sustains', () => {
     expect(j.getStats().combo).toBe(1) // and the combo survives
   })
 
+  it('names the note a lane is sustaining, so a re-grab sounds it', () => {
+    // On a folded keyboard one key covers several pitches, so which note is
+    // sounding is what decides the pitch a press picks back up.
+    const j = heldJudge()
+    expect(j.noteSustaining(60, 1.5)).toBeNull() // nothing struck yet
+    j.press(60, 1)
+    expect(j.noteSustaining(60, 1.5)?.midi).toBe(60)
+    expect(j.noteSustaining(60, 2.5)).toBeNull() // the note has finished
+  })
+
   it('does not credit holding past the end of the note', () => {
     const j = heldJudge()
     j.press(60, 1)

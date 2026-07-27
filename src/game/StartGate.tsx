@@ -21,7 +21,7 @@ import mascot from '../assets/luting.webp'
 
 interface Props {
   track: Track
-  /** easy mode: keys are bound by position, not by semitone */
+  /** the keys are bound by position, not by semitone: a fold or a key per pitch */
   compact: boolean
   songTitle: string
   best?: SongBest
@@ -114,7 +114,7 @@ export function StartGate({
                 Click any {track.isDrums ? 'pad' : 'key'} below, then press the computer key
                 you want on it — the whole {track.isDrums ? 'kit' : 'keyboard'} can be mapped
                 {compact
-                  ? ', and in easy mode that is only the notes this part plays.'
+                  ? ', which here is one key per note this part actually asks for.'
                   : ', including the notes under the home row, which suit the Z–M row.'}
               </>
             ) : (

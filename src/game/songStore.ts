@@ -17,7 +17,21 @@ export interface SongBest {
 }
 
 import type { Bindings } from './bindings'
+import type { KeyboardMode } from './settings'
 import { SONGS, tx } from './db'
+
+/**
+ * How a run is filed under `best`: by instrument, and by the keyboard it was
+ * played on. The same part on eight folded keys and on the full chromatic
+ * keyboard are different feats with different note counts, so one shouldn't
+ * overwrite or flatter the other.
+ *
+ * Hard mode keeps the bare instrument code, because that is what every score
+ * saved before the fold existed was played on — near enough, and it beats
+ * orphaning them all.
+ */
+export const bestKey = (instrument: string, mode: KeyboardMode): string =>
+  mode === 'hard' ? instrument : `${instrument}:${mode}`
 
 export interface SongRecord {
   /** lutingHash of the notation */

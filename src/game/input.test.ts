@@ -22,7 +22,10 @@ vi.stubGlobal('document', { activeElement: null })
 
 const { InputRouter, LaneMap } = await import('./input')
 const { setSimActive, simNote, setMidiInput, resetMirrorState } = await import('../luting-core/midi')
+const { keyboardSlots } = await import('./lanes')
+const { buildEasyMap } = await import('./easy')
 import type { PlayEvent } from './input'
+import type { EasyMap } from './easy'
 import type { GameNote, Track } from './chart'
 
 function melodicTrack(midis: number[]): Track {
@@ -52,18 +55,28 @@ function drumTrack(drums: string[]): Track {
   }
 }
 
-/** Spin up a router over a track and collect everything it emits. */
-function harness(track: Track, baseMidi = 60, compact = false) {
+/**
+ * Spin up a router over a track and collect everything it emits. `easy` folds
+ * the track first, exactly as the game does, so the router and the lane map see
+ * the same keyboard the player would.
+ */
+function harness(track: Track, baseMidi = 60, easy: EasyMap | null = null) {
   const events: PlayEvent[] = []
-  const lanes = new LaneMap(track)
+  const lanes = new LaneMap(track, easy)
   const router = new InputRouter({
     lanes,
     track,
     keyboardBaseMidi: baseMidi,
-    compact,
+    slots: keyboardSlots(track, easy ? 'easy' : 'impossible', easy),
     onPlay: (e) => events.push(e),
   })
   return { router, events, lanes }
+}
+
+/** Fire a computer-keyboard event at whatever the router has listening. */
+function typeKey(key: string, kind: 'keydown' | 'keyup' = 'keydown') {
+  const ev = { key, repeat: false, preventDefault: () => {} } as KeyboardEvent
+  for (const fn of listeners.get(kind) ?? []) fn(ev)
 }
 
 beforeEach(() => {
@@ -195,5 +208,75 @@ describe('lane mapping', () => {
     expect(lanes.soundFor(2)).toEqual({ drum: 'o5d' })
     expect(lanes.laneOfMidi(49)).toBe(2) // GM crash -> o5d
     expect(lanes.laneOfMidi(60)).toBe(-1) // hi bongo: not in this kit
+  })
+})
+
+describe('the folded keyboard', () => {
+  /** Twelve pitches, so the fold has to do something to reach eight keys. */
+  const wide = () => melodicTrack([48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67])
+
+  it('puts a note on the key its pitch folded onto', () => {
+    const track = wide()
+    const easy = buildEasyMap(track)
+    const lanes = new LaneMap(track, easy)
+    expect(easy.keys.length).toBe(8)
+    for (const midi of track.pitches) {
+      const lane = lanes.laneOfNote({ midi })
+      expect(easy.keys[lane].midis).toContain(midi)
+    }
+  })
+
+  it('sends a MIDI note to the key its pitch belongs to, however far out', () => {
+    const track = wide()
+    const easy = buildEasyMap(track)
+    const { router, events } = harness(track, 60, easy)
+    simNote('on', track.pitches[0], 0.8)
+    simNote('off', track.pitches[0], 0)
+    // A controller an octave below the part has nowhere exact to land, but the
+    // key the music is heading for beats no key at all.
+    simNote('on', 36, 0.8)
+    simNote('off', 36, 0)
+    simNote('on', 127, 0.8)
+    const struck = events.filter((e) => e.kind === 'on').map((e) => e.lane)
+    expect(struck).toEqual([0, 0, easy.keys.length - 1])
+    router.dispose()
+  })
+
+  it('sounds a folded key as the pitch it plays most', () => {
+    // The lane is a position now, so the lane number is not a pitch: without
+    // this the instrument would answer a press with note 3.
+    const track = wide()
+    const easy = buildEasyMap(track)
+    const lanes = new LaneMap(track, easy)
+    const sound = lanes.soundFor(3)
+    expect(easy.keys[3].midis).toContain(sound.midi)
+  })
+
+  it('binds the computer keys by position, with no octave to shift', () => {
+    const track = wide()
+    const easy = buildEasyMap(track)
+    const { router, events } = harness(track, 60, easy)
+    typeKey('a') // the first positional binding
+    expect(events[0].lane).toBe(0)
+    // Nothing to shift: the keys already name the part's own keys, so the arrow
+    // keys and the HUD buttons can't strand the player on a range they can't
+    // reach back from.
+    router.shiftOctave(12)
+    typeKey('a', 'keyup')
+    typeKey('a')
+    expect(events[events.length - 1].lane).toBe(0)
+    router.dispose()
+  })
+
+  it('folds a kit by piece, keeping the kick leftmost', () => {
+    // Ten pieces is two more than the eight pads easy mode will draw.
+    const kit = drumTrack(['o0a', 'o0b', 'o1c', 'o1d', 'o2c', 'o3c', 'o3d', 'o4c', 'o4a', 'o5d'])
+    const easy = buildEasyMap(kit)
+    const lanes = new LaneMap(kit, easy)
+    expect(easy.keys.length).toBe(8)
+    expect(easy.keys[0].drums[0]).toBe('o0a')
+    expect(lanes.laneOfNote({ drum: 'o0a' })).toBe(0)
+    // and a GM note still finds its pad through the fold
+    expect(lanes.laneOfMidi(36)).toBe(0)
   })
 })
