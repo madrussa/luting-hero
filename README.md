@@ -20,8 +20,9 @@ npm test
 
 ## How it plays
 
-- **Build a collection** — paste a luting (with a title and artist), drop
-  `.lute` files anywhere on the page, or import a collection zip. Every song in
+- **Build a collection** — paste a luting (its title and artist fill in from
+  the `//` headers, if it has them), drop `.lute` files anywhere on the page,
+  or import a collection zip. Copy any song back out to share it. Every song in
   the picker is really parsed, so the note counts and durations shown are the
   real ones.
 - **Pick an instrument** — each one is rated 1–10 for difficulty from what it
@@ -238,10 +239,16 @@ unbindable keys is what stops a remap stranding you on a range you can't leave.
 Songs live in IndexedDB, keyed by a hash of their notation, and the picker is
 also the library manager: add, import, export, delete.
 
-- **Paste** asks for a title and artist, since a pasted luting carries no
-  metadata of its own. One message or a whole **multilute** — the
-  `#lute m …` several-message format the LuteBoi optimiser emits — is fine;
-  the parts are rejoined and stored as a single luting.
+- **Paste** takes a title and artist, and **fills them in itself** when the
+  luting opens with the conventional `//Title` / `//Author:` lines — the same
+  headers a `.lute` file carries and **Copy luting** writes. Type in either
+  field and it's yours: no amount of re-pasting overwrites what you wrote. One
+  message or a whole **multilute** — the `#lute m …` several-message format the
+  LuteBoi optimiser emits — is fine; the parts are rejoined and stored as a
+  single luting.
+- **Copy luting**, on the song page next to Preview, puts the whole thing on
+  the clipboard *with* those headers, so sharing a song is one paste at each
+  end rather than a luting plus a retyped title.
 - **Import** takes loose `.lute` files, a collection zip, or a mix, and reads
   the conventional `//Title` / `//Author:` headers so nothing has to be
   described by hand. A file with no headers falls back to its filename

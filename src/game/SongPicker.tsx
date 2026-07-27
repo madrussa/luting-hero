@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import {
   addLuting, deleteLibrarySong, downloadBlob, exportCollection, importFiles,
-  listLibrary, looksLikeLuting,
+  listLibrary, looksLikeLuting, readLuteHeader,
 } from './library'
 import type { LibrarySong } from './library'
 import { buildChart } from './chart'
@@ -50,6 +50,18 @@ export function SongPicker({ onPick }: Props) {
   const [title, setTitle] = useState('')
   const [artist, setArtist] = useState('')
   const [text, setText] = useState('')
+  // Whether the player has typed in a field themselves. A luting copied from
+  // here (or exported as a .lute) carries its `//Title` / `//Author:` lines, so
+  // pasting one can fill these in — but only while they're still ours to fill.
+  // Once you've typed a title, no amount of re-pasting overwrites it.
+  const [edited, setEdited] = useState({ title: false, artist: false })
+
+  const pasteLuting = (value: string) => {
+    setText(value)
+    const head = readLuteHeader(value, '')
+    if (!edited.title) setTitle(head.title)
+    if (!edited.artist) setArtist(head.artist)
+  }
 
   const refresh = useCallback(async () => setSongs(await listLibrary()), [])
   useEffect(() => void refresh(), [refresh])
@@ -89,6 +101,7 @@ export function SongPicker({ onPick }: Props) {
     setTitle('')
     setArtist('')
     setText('')
+    setEdited({ title: false, artist: false })
     say(`Added “${res.song!.title}”.`)
     await refresh()
   }
@@ -184,13 +197,23 @@ export function SongPicker({ onPick }: Props) {
           <div className="add-fields">
             <label className="field">
               <span>Title</span>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song name" />
+              <input
+                value={title}
+                onChange={(e) => {
+                  setTitle(e.target.value)
+                  setEdited((p) => ({ ...p, title: true }))
+                }}
+                placeholder="Song name, or paste a luting below"
+              />
             </label>
             <label className="field">
               <span>Artist</span>
               <input
                 value={artist}
-                onChange={(e) => setArtist(e.target.value)}
+                onChange={(e) => {
+                  setArtist(e.target.value)
+                  setEdited((p) => ({ ...p, artist: true }))
+                }}
                 placeholder="Who wrote or transcribed it"
               />
             </label>
@@ -200,14 +223,16 @@ export function SongPicker({ onPick }: Props) {
             <textarea
               rows={5}
               value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={'#lute 480 il ceg…\n\nA multilute pasted as several "#lute m …" messages is joined back into one.'}
+              onChange={(e) => pasteLuting(e.target.value)}
+              placeholder={'//Song name\n//Author: whoever wrote it\n#lute 480 il ceg…\n\nA multilute pasted as several "#lute m …" messages is joined back into one.'}
             />
           </label>
           <p className="hint">
             Paste one message or a whole multilute — the <code>#lute m …</code> parts are
-            rejoined automatically. Adding a luting you already have is recognised as the same
-            song, whatever you call it.
+            rejoined automatically. If it opens with <code>//Title</code> and{' '}
+            <code>//Author:</code> lines, as a <code>.lute</code> file or a luting copied from
+            this app does, the fields above fill themselves in. Adding a luting you already
+            have is recognised as the same song, whatever you call it.
           </p>
           <button type="button" className="btn primary" disabled={!text.trim()} onClick={() => void submitPaste()}>
             Add to collection

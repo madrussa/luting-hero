@@ -152,8 +152,7 @@ export default function App() {
       {screen === 'instruments' && chart && song && (
         <InstrumentPicker
           chart={chart}
-          songTitle={song.title}
-          songText={song.text}
+          song={song}
           record={record}
           onBack={backToSongs}
           onPick={pickTrack}

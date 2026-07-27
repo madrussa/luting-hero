@@ -2,8 +2,10 @@
 // whole part, however many luting voices it was written across.
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square } from 'lucide-react'
+import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square, Copy, Check } from 'lucide-react'
 import type { SongRecord } from './songStore'
+import { toLuteFile } from './library'
+import type { LibrarySong } from './library'
 import type { Chart, Track } from './chart'
 import { noteName } from './lanes'
 import { DRUM_SOUNDS } from '../luting-core/luting'
@@ -20,9 +22,8 @@ import conducting from '../assets/conducting.webp'
 
 interface Props {
   chart: Chart
-  songTitle: string
-  /** the raw luting, for previewing the whole arrangement */
-  songText: string
+  /** the whole library entry: its notation previews, and its metadata shares */
+  song: LibrarySong
   /** what we remember about this song; null until IndexedDB answers */
   record: SongRecord | null
   onBack: () => void
@@ -44,9 +45,10 @@ function Stars({ rating }: { rating: number }) {
   )
 }
 
-export function InstrumentPicker({ chart, songTitle, songText, record, onBack, onPick }: Props) {
+export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props) {
   const sorted = [...chart.tracks].sort((a, b) => a.difficulty.rating - b.difficulty.rating)
   const { keyboard } = useSettings()
+  const [copied, setCopied] = useState(false)
 
   // Which instrument is being auditioned. In sample mode the preview waits for
   // that instrument's pack, so this doubles as the spinner — and warms the pack
@@ -71,10 +73,34 @@ export function InstrumentPicker({ chart, songTitle, songText, record, onBack, o
       if (getPlaybackMode() === 'quality') {
         await Promise.all([...new Set(chart.allNotes.map((n) => n.instrument))].map(loadBank))
       }
-      playLuting(songText, { id: PREVIEW_ID })
+      playLuting(song.text, { id: PREVIEW_ID })
     } finally {
       setBusy((b) => (b === PREVIEW_ID ? null : b))
     }
+  }
+
+  // Shared *with* its `//Title` / `//Author:` header lines, which is what lets
+  // whoever receives it paste the one blob and have the fields fill themselves
+  // in. The hash ignores comments, so a shared copy still dedupes against the
+  // same song if they already have it under another name.
+  const copySong = async () => {
+    const text = toLuteFile(song)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // No async clipboard (an insecure origin, usually): the old way still
+      // works, and failing silently here would look like the button is broken.
+      const el = document.createElement('textarea')
+      el.value = text
+      el.style.position = 'fixed'
+      el.style.opacity = '0'
+      document.body.append(el)
+      el.select()
+      document.execCommand('copy')
+      el.remove()
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1600)
   }
 
   const audition = async (code: string) => {
@@ -93,7 +119,7 @@ export function InstrumentPicker({ chart, songTitle, songText, record, onBack, o
           <ArrowLeft size={15} /> Songs
         </button>
         <h2>
-          {songTitle}
+          {song.title}
           <span className="sub">
             {chart.bpm} #lute · {mmss(chart.durationSec)} · {chart.allNotes.length.toLocaleString()} notes
           </span>
@@ -112,6 +138,14 @@ export function InstrumentPicker({ chart, songTitle, songText, record, onBack, o
             <Play size={15} />
           )}
           {previewing ? 'Stop' : busy === PREVIEW_ID ? 'Loading…' : 'Preview song'}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void copySong()}
+          title="Copy the luting, with its title and artist, ready to paste"
+        >
+          {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy luting'}
         </button>
         <img src={conducting} alt="" className="picker-mascot" />
       </div>

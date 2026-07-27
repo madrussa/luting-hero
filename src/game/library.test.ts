@@ -69,6 +69,16 @@ describe('toLuteFile', () => {
     const s = song({ text: '//Whatever\r\n//Author: Old\r\n#lute 480 ilceg' })
     expect(lutingHash(toLuteFile(s))).toBe(lutingHash(s.text))
   })
+
+  it('is readable back as its own header, which is what makes sharing work', () => {
+    // Copy on the song page emits this; the paste form reads it to fill the
+    // title and artist in. Those two have to agree or sharing is a retype.
+    const s = song({ title: 'Bean Bean Bean', artist: 'Vengaboys' })
+    expect(readLuteHeader(toLuteFile(s), 'fallback')).toEqual({
+      title: 'Bean Bean Bean',
+      artist: 'Vengaboys',
+    })
+  })
 })
 
 describe('luteFilename', () => {
