@@ -529,7 +529,7 @@ silent switch mutes the game and nothing on the page can tell. See
 
 | | |
 | --- | --- |
-| **MIDI controller** | Chrome/Edge only (Web MIDI). Nothing is requested until you click Connect — after that it's remembered. Mirror ports are de-duplicated, and there's an octave transpose for short keyboards. |
+| **MIDI controller** | Chrome, Edge and Firefox 108+ (Web MIDI); Safari doesn't ship it on any platform. Nothing is requested until you click Connect — after that it's remembered. Mirror ports are de-duplicated, and there's an octave transpose for short keyboards. |
 | **On-screen instrument** | Any browser. Click or drag across the keys for a glissando. |
 | **Computer keyboard** | Home row = white keys, the row above = black keys, the <kbd>Z</kbd>–<kbd>M</kbd> row = the octave below, <kbd>←</kbd>/<kbd>→</kbd> shift an octave. Drum pads bind left to right from <kbd>A</kbd>. All remappable. |
 
@@ -555,6 +555,27 @@ itself next load. And the port is matched **by id, then by name**: ids are
 per-origin and usually stable, but a re-plug can churn them. A controller
 that's unplugged at load leaves you on "all devices", and is picked up the
 moment it appears.
+
+A refusal and a bad afternoon are told apart, too: only a browser that actually
+*denied* us clears the remembered connection. A device layer that fell over, or
+a controller that simply wasn't plugged in at load, doesn't cost you the setting.
+
+### What the browsers make of it
+
+MIDI access is a permission in every browser that has one — Firefox has always
+gated it, and Chrome has prompted for plain access since 124 rather than only
+for sysex. The game asks for the **weaker, non-sysex grant**: sysex can
+reprogram a device's firmware, it gets its own and scarier prompt, and reading
+note-on/note-off doesn't need it. The permission check before a silent restore
+asks about the same grant it will request, since the two are answered
+separately.
+
+Firefox is stricter than the prompt suggests. With **no device attached it
+refuses outright** — no prompt at all — and holds the rejection for a random
+3–13 seconds so a page can't time the failure to work out whether the machine
+has any MIDI hardware. So plug the controller in *before* clicking Connect, and
+if the button sits on "Connecting…" for ten seconds, that's Firefox thinking,
+not the game hanging. The panel says as much once a request runs long.
 
 The transpose lives with the device rather than the song, because that's what
 it describes: where your controller's octave sits against the game's keyboard.
