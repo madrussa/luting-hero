@@ -13,6 +13,7 @@
 
 import { useSyncExternalStore } from 'react'
 import {
+  MidiAccessError,
   disableMidi,
   enableMidi,
   getMidiDevices,
@@ -145,10 +146,18 @@ export function selectMidiInput(id: string): void {
 /**
  * Only reconnect silently. If the grant has lapsed, asking again would put a
  * permission prompt in front of a player who hasn't touched anything yet.
+ *
+ * The descriptor mirrors what the engine requests, sysex and all: the two are
+ * separate grants, and a query that doesn't match the request would answer a
+ * question we're not asking. Both Chrome and Firefox implement the `midi`
+ * permission name, so this gate works in both rather than only Chrome.
  */
 async function alreadyGranted(): Promise<boolean> {
   try {
-    const status = await navigator.permissions.query({ name: 'midi' } as PermissionDescriptor)
+    const status = await navigator.permissions.query({
+      name: 'midi',
+      sysex: false,
+    } as PermissionDescriptor)
     return status.state === 'granted'
   } catch {
     return false // no Permissions API, or it doesn't know 'midi': don't risk it
@@ -162,9 +171,12 @@ export async function restoreMidi(): Promise<void> {
     if (!(await alreadyGranted())) return
     await enableMidi()
     applySelection()
-  } catch {
-    // denied, or the device layer failed: stop trying on every load
-    write({ connected: false })
+  } catch (e) {
+    // Forget the controller only if the browser actually refused us. Anything
+    // else — the device layer failing, or Firefox declining because nothing is
+    // plugged in yet — is this load's problem, not a reason to make the player
+    // reconnect by hand once the controller is back.
+    if (e instanceof MidiAccessError && e.denied) write({ connected: false })
   } finally {
     restoring = false
     refresh()

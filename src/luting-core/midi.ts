@@ -1,6 +1,15 @@
 // Web MIDI input: connect a hardware keyboard/controller and stream its
 // note-on/note-off events to subscribers (the live synth and the recorder).
-// Chrome/Edge only — Safari and Firefox don't ship the Web MIDI API.
+//
+// Chrome, Edge and Firefox (108+) ship the Web MIDI API. Safari doesn't, on any
+// platform, and WebKit has no plans to — a MIDI device list is a fingerprint.
+// The on-screen keyboard simulator further down is the fallback there.
+//
+// Access is a permission everywhere it exists: Firefox has always gated it, and
+// Chrome has prompted for plain access since 124 rather than only for sysex. We
+// ask for non-sysex access, which is the weaker grant — sysex can reprogram a
+// device's firmware, and reading note on/off doesn't need it. (In an iframe the
+// embedding page would also have to allow="midi"; the game isn't embedded.)
 
 export interface MidiDevice {
   id: string
@@ -20,6 +29,50 @@ export interface MidiNoteEvent {
 
 export const isMidiSupported = (): boolean =>
   typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator
+
+/** Shared so the UI and the thrown error can't drift apart. */
+export const MIDI_UNSUPPORTED =
+  "This browser has no Web MIDI — Safari doesn't ship it. Chrome, Edge or Firefox will see a controller."
+
+/**
+ * A failed access request, carrying whether the browser *refused* (permission
+ * denied, or Firefox declining because nothing is plugged in) as opposed to the
+ * device layer falling over. Callers use it to decide whether the remembered
+ * connection is now wrong or just unavailable this once.
+ */
+export class MidiAccessError extends Error {
+  constructor(
+    message: string,
+    readonly denied: boolean
+  ) {
+    super(message)
+    this.name = 'MidiAccessError'
+  }
+}
+
+/**
+ * Turn a rejected requestMIDIAccess into something a player can act on.
+ *
+ * Firefox is the case worth knowing: it refuses MIDI outright when no device is
+ * attached — no prompt at all — and delays the rejection by a random 3–13
+ * seconds so a page can't time it to learn whether the machine has devices. So
+ * "plug it in first" is the advice that actually unblocks people, and a Connect
+ * that appears to hang for ten seconds is the browser, not us.
+ */
+function accessError(e: unknown): MidiAccessError {
+  const name = e instanceof DOMException ? e.name : ''
+  if (name === 'SecurityError' || name === 'NotAllowedError') {
+    return new MidiAccessError(
+      'The browser blocked MIDI access. Plug the controller in before connecting — Firefox refuses when nothing is attached — then allow MIDI when asked.',
+      true
+    )
+  }
+  if (name === 'NotSupportedError') {
+    return new MidiAccessError('This system has no MIDI support the browser can reach.', false)
+  }
+  const detail = e instanceof Error && e.message ? e.message : ''
+  return new MidiAccessError(detail || 'Could not reach any MIDI devices.', false)
+}
 
 let access: MIDIAccess | null = null
 let selectedInput = 'all'
@@ -171,15 +224,22 @@ function bindInputs() {
 }
 
 /**
- * Request MIDI access (prompts the user in Chrome/Edge) and start listening.
- * Resolves to the current device list; rejects if unsupported or denied.
- * This is the ONLY place the browser is asked for device access — nothing
- * runs at page load, so no permission prompt appears before the user acts.
+ * Request MIDI access (which prompts the user) and start listening. Resolves to
+ * the current device list; rejects with a MidiAccessError if unsupported,
+ * refused, or unreachable. This is the ONLY place the browser is asked for
+ * device access, and it must stay reachable from a click: nothing runs at page
+ * load, so no permission prompt appears before the user acts, and the request
+ * keeps the user activation Firefox's grant flow needs.
  */
 export async function enableMidi(): Promise<MidiDevice[]> {
-  if (!isMidiSupported()) throw new Error('This browser has no Web MIDI support — use Chrome or Edge.')
+  if (!isMidiSupported()) throw new MidiAccessError(MIDI_UNSUPPORTED, false)
   if (!access) {
-    access = await navigator.requestMIDIAccess({ sysex: false })
+    // sysex stays off: see the note at the top of the file.
+    try {
+      access = await navigator.requestMIDIAccess({ sysex: false })
+    } catch (e) {
+      throw accessError(e)
+    }
     access.onstatechange = () => {
       bindInputs() // newly plugged devices need their handler attached
       for (const cb of [...deviceSubs]) cb()
