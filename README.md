@@ -483,6 +483,34 @@ pasteable code, so a mapping can be shared with someone else.
 > comment handling and worked around it — see `stripComments` in
 > [`src/game/hash.ts`](src/game/hash.ts).
 
+## On a phone
+
+Desktop is the design, and the playfield already works on a phone — a folded
+keyboard of four or eight keys is a better touch target than a chromatic one ever
+was. What needed doing was around the edges, all of it inside a
+`max-width: 700px` block so the desktop layout is untouched:
+
+- The **browser's own chrome** is painted to match. On a phone the bar above the
+  viewport is part of the app as far as the eye is concerned, and a pale strip
+  over a dark playfield reads as a rendering fault. `theme-color` follows the
+  theme *setting* rather than `prefers-color-scheme`, since the setting is what
+  decides the page's colours — and it's read from `--bg` in the stylesheet, so the
+  two can't drift apart.
+- Rows that had no business wrapping stop wrapping: the title loses its tagline
+  and fits on one line, the song page's header gives the title a row of its own
+  and drops the conducting mascot, which is there to fill space a phone hasn't
+  got.
+- The four keyboards go **two by two** instead of one per row, which hands back
+  140 pixels — enough that the instruments are on screen when the page opens.
+- The start gate says **Tap to start**, not "Press Space". A phone can't press
+  Space, and telling it to is the kind of small lie that makes a game feel like it
+  wasn't meant for you. Only the wording changes: the keys all still work if a
+  keyboard is attached.
+
+On iOS, Web Audio is a *system sound* until told otherwise, which means the
+silent switch mutes the game and nothing on the page can tell. See
+`audioSession.ts`.
+
 ## Input
 
 | | |

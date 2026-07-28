@@ -17,6 +17,7 @@ import { isBindable, resetBindings, setBinding, useBindings } from './bindings'
 import type { BindingKind } from './bindings'
 import type { Track } from './chart'
 import type { SongBest } from './songStore'
+import { isTouchPrimary } from './touch'
 import mascot from '../assets/luting.webp'
 
 interface Props {
@@ -49,6 +50,7 @@ export function StartGate({
   onStart,
 }: Props) {
   useBindings() // re-render when a binding changes
+  const touch = isTouchPrimary()
   const kind: BindingKind = track.isDrums ? 'drums' : compact ? 'compact' : 'piano'
 
   const capturingRef = useRef(capturing)
@@ -134,7 +136,10 @@ export function StartGate({
 
         <div className="start-actions">
           <button type="button" className="btn primary start-btn" onClick={onStart}>
-            <Play size={17} /> Press <kbd>Space</kbd> to start
+            <Play size={17} />
+            {/* A phone can't press Space, and telling it to is the kind of
+                small lie that makes a game feel like it wasn't meant for you. */}
+            {touch ? 'Tap to start' : <>Press <kbd>Space</kbd> to start</>}
           </button>
           <button type="button" className="btn ghost" onClick={onToggleRemap}>
             <Keyboard size={15} /> {remapping ? 'Done mapping' : 'Remap keys'}

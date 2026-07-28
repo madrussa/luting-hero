@@ -122,8 +122,25 @@ let settings: Settings = (() => {
 
 const subs = new Set<() => void>()
 
+/**
+ * The two colours the OS is allowed to know about: the page's own, and the
+ * browser's chrome around it.
+ *
+ * On a phone the bar above the viewport is part of the app as far as the eye is
+ * concerned, so a pale strip over a dark playfield reads as a rendering fault.
+ * `theme-color` fixes that, and it has to follow the *setting* rather than
+ * `prefers-color-scheme`, because the setting is what decides the page's colours.
+ *
+ * Read from the stylesheet rather than hard-coded here: `--bg` is defined once
+ * per theme in styles.css, and two places disagreeing about the background is
+ * exactly the seam this exists to remove.
+ */
 function applyTheme() {
-  document.documentElement.dataset.theme = settings.theme
+  const root = document.documentElement
+  root.dataset.theme = settings.theme
+  const bg = getComputedStyle(root).getPropertyValue('--bg').trim()
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (bg && meta) meta.setAttribute('content', bg)
 }
 applyTheme()
 
