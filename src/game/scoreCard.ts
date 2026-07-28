@@ -267,6 +267,27 @@ export async function drawScoreCard(card: ScoreCard): Promise<Blob> {
 export type ShareOutcome = 'shared' | 'copied' | 'downloaded' | 'failed'
 
 /**
+ * Put the card on the clipboard, ready to paste into a chat.
+ *
+ * Its own function because it is also its own button: pasting is what most
+ * people actually do with a score card on a desktop, and going through the share
+ * sheet to get there is two dialogs too many. Fails rather than falling back —
+ * the button that asked for the clipboard specifically shouldn't quietly do
+ * something else, and the other half of the control still offers a file.
+ */
+export async function copyScoreCard(blob: Blob): Promise<'copied' | 'failed'> {
+  try {
+    if (navigator.clipboard && 'write' in navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      return 'copied'
+    }
+  } catch {
+    // no image clipboard here (Firefox, or an insecure origin)
+  }
+  return 'failed'
+}
+
+/**
  * Get the card to wherever it can go, best first: the system share sheet, the
  * clipboard, then a download. Three paths because support is genuinely uneven —
  * file sharing is a phone and Windows feature, image-to-clipboard is a desktop
@@ -284,14 +305,7 @@ export async function shareScoreCard(blob: Blob, filename: string, text: string)
       if (err instanceof DOMException && err.name === 'AbortError') return 'shared'
     }
   }
-  try {
-    if (navigator.clipboard && 'write' in navigator.clipboard && typeof ClipboardItem !== 'undefined') {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-      return 'copied'
-    }
-  } catch {
-    // no image clipboard here (Firefox, or an insecure origin)
-  }
+  if ((await copyScoreCard(blob)) === 'copied') return 'copied'
   try {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

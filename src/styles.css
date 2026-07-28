@@ -182,6 +182,29 @@ a {
   opacity: 0.5;
   cursor: default;
 }
+/* A share button and its shortcut, joined: the wide half takes the best route
+   the browser offers, the icon half goes straight to the clipboard. One control,
+   so one message — the outcome is reported on the label whichever half acted. */
+.btn-split {
+  display: inline-flex;
+}
+.btn-split > .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.btn-split > .btn:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  /* the two borders overlap into one seam rather than doubling up */
+  margin-left: -1px;
+  padding-inline: 11px;
+}
+/* Whichever half is hovered owns the seam, or its border colour is painted over
+   by the neighbour's. */
+.btn-split > .btn:hover:not(:disabled) {
+  position: relative;
+  z-index: 1;
+}
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);

@@ -2,7 +2,7 @@
 // whole part, however many luting voices it was written across.
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square, Copy, Check, Link2 } from 'lucide-react'
+import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square, Copy, Check } from 'lucide-react'
 import type { SongRecord } from './songStore'
 import { toLuteFile } from './library'
 import type { LibrarySong } from './library'
@@ -22,7 +22,8 @@ import type { KeyboardMode } from './settings'
 import { KEYBOARD_LABELS, MAX_EASY_KEYS, MAX_SUPER_EZ_KEYS, playableTrack } from './easy'
 import type { EasyMap } from './easy'
 import { bestKey } from './songStore'
-import { songLink } from './share'
+import { copyText } from './clipboard'
+import { ShareLinkButton } from './ShareLinkButton'
 import conducting from '../assets/conducting.webp'
 
 interface Props {
@@ -82,7 +83,6 @@ function Stars({ rating }: { rating: number }) {
 export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props) {
   const { keyboard } = useSettings()
   const [copied, setCopied] = useState(false)
-  const [linked, setLinked] = useState(false)
 
   // Every card describes the part *as the chosen keyboard will ask for it*.
   // That matters most in easy mode, where the fold genuinely changes the part —
@@ -125,58 +125,14 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
     }
   }
 
-  /**
-   * Put text on the clipboard, whatever the browser allows. The fallback is for
-   * insecure origins, where there is no async clipboard at all and failing
-   * silently would look like a broken button.
-   */
-  const toClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      return
-    } catch {
-      const el = document.createElement('textarea')
-      el.value = text
-      el.style.position = 'fixed'
-      el.style.opacity = '0'
-      document.body.append(el)
-      el.select()
-      document.execCommand('copy')
-      el.remove()
-    }
-  }
-
   // Shared *with* its `//Title` / `//Author:` header lines, which is what lets
   // whoever receives it paste the one blob and have the fields fill themselves
   // in. The hash ignores comments, so a shared copy still dedupes against the
   // same song if they already have it under another name.
   const copySong = async () => {
-    await toClipboard(toLuteFile(song))
+    await copyText(toLuteFile(song))
     setCopied(true)
     setTimeout(() => setCopied(false), 1600)
-  }
-
-  /**
-   * The same song as a link. The whole luting travels in the URL's fragment, so
-   * there is nothing to host and nothing to download at the other end — opening
-   * it adds the song and goes straight to this screen.
-   */
-  const shareLink = async () => {
-    const url = songLink(song, `${location.origin}${location.pathname}`)
-    // On a phone this offers the messaging apps; everywhere else it copies.
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: song.title, text: `${song.title} on Luting Hero`, url })
-        setLinked(true)
-        setTimeout(() => setLinked(false), 1600)
-        return
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-      }
-    }
-    await toClipboard(url)
-    setLinked(true)
-    setTimeout(() => setLinked(false), 1600)
   }
 
   const audition = async (code: string) => {
@@ -223,14 +179,7 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
         >
           {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy luting'}
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => void shareLink()}
-          title="A link with the whole song in it — opening it adds the song"
-        >
-          {linked ? <Check size={15} /> : <Link2 size={15} />} {linked ? 'Link ready' : 'Share link'}
-        </button>
+        <ShareLinkButton song={song} />
         <img src={conducting} alt="" className="picker-mascot" />
       </div>
 

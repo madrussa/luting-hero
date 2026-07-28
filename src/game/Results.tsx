@@ -1,15 +1,17 @@
 // End-of-run summary.
 
 import { useEffect, useState } from 'react'
-import { RotateCcw, ListMusic, Home, Share2, Check, Download, Copy } from 'lucide-react'
+import { RotateCcw, ListMusic, Home, Share2, Check, Download, Copy, X, ImageIcon } from 'lucide-react'
 import { accuracy, grade, maxScoreFor } from './judge'
 import type { Stats } from './judge'
 import type { Track } from './chart'
+import type { LibrarySong } from './library'
+import { ShareLinkButton } from './ShareLinkButton'
 import { KEYBOARD_LABELS } from './easy'
 import { hitWindowById } from './settings'
 import type { KeyboardMode } from './settings'
 import { conditionCode } from './share'
-import { drawScoreCard, shareScoreCard } from './scoreCard'
+import { copyScoreCard, drawScoreCard, shareScoreCard } from './scoreCard'
 import type { ShareOutcome } from './scoreCard'
 import dumb from '../assets/dumb.webp'
 import mascot from '../assets/luting.webp'
@@ -17,10 +19,8 @@ import mascot from '../assets/luting.webp'
 interface Props {
   stats: Stats
   track: Track
-  songTitle: string
-  artist: string
-  /** lutingHash of the song, for the condition code */
-  songHash: string
+  /** the library entry: its title and artist for the card, its notation for the link */
+  song: LibrarySong
   /** the keyboard it was played on */
   keyboard: KeyboardMode
   /** HitWindow id it was judged by */
@@ -30,7 +30,7 @@ interface Props {
   onHome: () => void
 }
 
-/** What a shared image did, so the button can say so. */
+/** What the card ended up doing, so the button can say so. */
 const SHARE_SAID: Record<ShareOutcome, string> = {
   shared: 'Shared',
   copied: 'Copied',
@@ -38,12 +38,26 @@ const SHARE_SAID: Record<ShareOutcome, string> = {
   failed: 'Couldn’t share',
 }
 
+/** The clipboard half can only fail one way, and it isn't "couldn't share". */
+const saidWord = (from: 'share' | 'copy', outcome: ShareOutcome): string =>
+  from === 'copy' && outcome === 'failed' ? 'Couldn’t copy' : SHARE_SAID[outcome]
+
+/** The route the card took, so the icon agrees with the word beside it. */
+const SaidIcon = ({ outcome }: { outcome: ShareOutcome }) =>
+  outcome === 'copied' ? (
+    <Copy size={15} />
+  ) : outcome === 'downloaded' ? (
+    <Download size={15} />
+  ) : outcome === 'failed' ? (
+    <X size={15} />
+  ) : (
+    <Check size={15} />
+  )
+
 export function Results({
   stats,
   track,
-  songTitle,
-  artist,
-  songHash,
+  song,
   keyboard,
   hitWindow,
   onRetry,
@@ -58,18 +72,25 @@ export function Results({
   const window_ = hitWindowById(hitWindow)
   const keyboardLabel = KEYBOARD_LABELS[keyboard]
   const windowLabel = `${window_.label} ±${window_.good} ms`
-  const code = conditionCode({ songHash, instrument: track.instrument, keyboard, hitWindow })
+  const code = conditionCode({
+    songHash: song.hash,
+    instrument: track.instrument,
+    keyboard,
+    hitWindow,
+  })
 
   // The card is drawn as soon as the run ends, not when Share is clicked: a
   // share sheet has to open inside the gesture that asked for it, and awaiting a
   // canvas in between is enough for a browser to refuse.
   const [card, setCard] = useState<Blob | null>(null)
-  const [said, setSaid] = useState<ShareOutcome | null>(null)
+  // Which half of the split button acted, and what came of it. The message goes
+  // on the label whichever half it was — they are one control, so one answer.
+  const [said, setSaid] = useState<{ from: 'share' | 'copy'; outcome: ShareOutcome } | null>(null)
   useEffect(() => {
     let live = true
     void drawScoreCard({
-      songTitle,
-      artist,
+      songTitle: song.title,
+      artist: song.artist,
       track,
       stats,
       keyboardLabel,
@@ -85,17 +106,27 @@ export function Results({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const report = (from: 'share' | 'copy', outcome: ShareOutcome) => {
+    setSaid({ from, outcome })
+    setTimeout(() => setSaid(null), 2600)
+  }
+
   const share = async () => {
     if (!card) return
-    const name = `${songTitle} — ${track.name} (${keyboardLabel}).png`.replace(/[/\\?%*:|"<>]/g, '-')
-    setSaid(
+    const name = `${song.title} — ${track.name} (${keyboardLabel}).png`.replace(/[/\\?%*:|"<>]/g, '-')
+    report(
+      'share',
       await shareScoreCard(
         card,
         name,
-        `${songTitle} — ${track.name} · ${keyboardLabel} · ${stats.score.toLocaleString()} · ${g} · ${code}`
+        `${song.title} — ${track.name} · ${keyboardLabel} · ${stats.score.toLocaleString()} · ${g} · ${code}`
       )
     )
-    setTimeout(() => setSaid(null), 2600)
+  }
+
+  const copy = async () => {
+    if (!card) return
+    report('copy', await copyScoreCard(card))
   }
 
   // A consistent bias is worth calling out — it's a setting away from fixed,
@@ -115,8 +146,8 @@ export function Results({
       </div>
 
       <h2>
-        {songTitle}
-        {artist && <span className="sub">{artist}</span>}
+        {song.title}
+        {song.artist && <span className="sub">{song.artist}</span>}
       </h2>
 
       {/* The instrument is the other half of what you just did — a score with no
@@ -222,24 +253,37 @@ export function Results({
         <button type="button" className="btn primary" onClick={onRetry}>
           <RotateCcw size={15} /> Play again
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => void share()}
-          disabled={!card}
-          title="A score card with the code on it, to share or save"
-        >
-          {said === null ? (
-            <Share2 size={15} />
-          ) : said === 'copied' ? (
-            <Copy size={15} />
-          ) : said === 'downloaded' ? (
-            <Download size={15} />
-          ) : (
-            <Check size={15} />
-          )}
-          {said === null ? 'Share score' : SHARE_SAID[said]}
-        </button>
+        {/* Share, and — because pasting into a chat is what most people are
+            actually doing — a second half that goes straight to the clipboard
+            instead of through the share sheet. */}
+        <span className="btn-split">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void share()}
+            disabled={!card}
+            title="A score card with the code on it, to share or save"
+          >
+            {said === null ? <Share2 size={15} /> : <SaidIcon outcome={said.outcome} />}
+            {said === null ? 'Share score' : saidWord(said.from, said.outcome)}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void copy()}
+            disabled={!card}
+            aria-label="Copy the score card to the clipboard"
+            title="Copy the score card to the clipboard"
+          >
+            {said?.from === 'copy' && said.outcome === 'copied' ? (
+              <Check size={15} />
+            ) : (
+              <ImageIcon size={15} />
+            )}
+          </button>
+        </span>
+        {/* The song itself, so whoever you just sent a score to can play it. */}
+        <ShareLinkButton song={song} />
         <button type="button" className="btn" onClick={onChangeInstrument}>
           <ListMusic size={15} /> Another instrument
         </button>

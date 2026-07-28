@@ -37,8 +37,9 @@ npm test
 - **Play it** — notes fall down a 3D highway onto the keyboard. Hit them as
   they cross the line. Everything you didn't pick keeps playing behind you.
 - **Share it** — the results screen names the part and the rules it was played
-  under, and **Share score** draws a card carrying both, plus a code that says
-  two players were comparing the same thing.
+  under. **Share score** draws a card carrying both, plus a code that says two
+  players were comparing the same thing, and **Share song** hands over the song
+  itself as a link. Either button's second half copies straight to the clipboard.
 
 ## The design decisions worth knowing about
 
@@ -347,7 +348,7 @@ also the library manager: add, import, export, delete.
 - **Copy luting**, on the song page next to Preview, puts the whole thing on
   the clipboard *with* those headers, so sharing a song is one paste at each
   end rather than a luting plus a retyped title.
-- **Share link**, beside it, puts the same song in a *URL* — see below.
+- **Share song**, beside it, puts the same song in a *URL* — see below.
 - **Import** takes loose `.lute` files, a collection zip, or a mix, and reads
   the conventional `//Title` / `//Author:` headers so nothing has to be
   described by hand. A file with no headers falls back to its filename
@@ -370,9 +371,10 @@ and a **run** can be compared with someone.
 
 ### A song fits in a link
 
-**Share link** on the song page produces a URL with the entire luting inside it.
-Opening it adds the song and lands on its instrument picker — nothing to
-download, nothing hosted, no account.
+**Share song** — on the song page and again on the results screen, where you have
+just given someone a score they might want to try — produces a URL with the entire
+luting inside it. Opening it adds the song and lands on its instrument picker:
+nothing to download, nothing hosted, no account.
 
 The payload rides in the URL's **fragment**, which is the whole trick: a
 fragment is never sent to a server, so a song shared this way stays as private as
@@ -419,6 +421,19 @@ nothing is worse than one that saves a file. The card is drawn when the run ends
 rather than when the button is pressed, because a share sheet has to open inside
 the gesture that asked for it and awaiting a canvas in between is enough for a
 browser to refuse.
+
+### Both share buttons are split
+
+Each is two halves of one control: the wide side takes that best-route path, and
+the icon side goes **straight to the clipboard**. Pasting into a chat is what most
+people are actually doing on a desktop, and reaching it through a share sheet is
+a dialog too many.
+
+The clipboard half **fails rather than falling back** — a button that asked for
+the clipboard specifically shouldn't quietly download a file instead, and the
+other half is right there if that's what you wanted. Feedback goes on the *label*
+whichever half acted, because the two halves are one control and should give one
+answer.
 
 ## What's remembered, and where
 

@@ -252,9 +252,7 @@ export default function App() {
         <Results
           stats={stats}
           track={play.track}
-          songTitle={song.title}
-          artist={song.artist}
-          songHash={song.hash}
+          song={song}
           keyboard={settings.keyboard}
           hitWindow={settings.hitWindow}
           onRetry={() => {
