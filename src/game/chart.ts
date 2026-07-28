@@ -385,6 +385,37 @@ export function buildChart(text: string): Chart {
   return { bpm, durationSec, tracks: playable, allNotes: notes, warnings }
 }
 
+/**
+ * How long a song is given to ring out after its last note before the run ends
+ * and the results take over. Long enough for a held chord to fall away, short
+ * enough that it doesn't read as the game having hung.
+ */
+export const OUTRO_SEC = 3
+
+/**
+ * The song time the run should end at.
+ *
+ * A run used to stop a second and a half after its last note, which on a song
+ * that finishes on a held chord means cutting the results in over the decay —
+ * the one moment a song most wants to be left alone. So it's held open for
+ * OUTRO_SEC after the last note anyone plays, yours or the band's.
+ *
+ * The floor, not an addition: OUTRO_SEC of *silence* at the end, rather than
+ * that much again on top of whatever silence is already there. A chart that ends
+ * in a minute of nothing shouldn't leave the player watching an empty highway for
+ * a minute and three.
+ *
+ * As it happens the upstream parser reports `durationSec` as exactly the end of
+ * the last note — trailing rests don't extend it — so today the max always takes
+ * the ring-out and the other branch never runs. It stays because it is the rule
+ * that was wanted: if a chart ever does arrive with silence written into its
+ * length, padding it further would be wrong.
+ */
+export function runEndSec(chart: Chart): number {
+  const lastNote = chart.allNotes.reduce((end, n) => Math.max(end, n.timeSec + n.durSec), 0)
+  return Math.max(chart.durationSec, lastNote + OUTRO_SEC)
+}
+
 /** The notes that keep playing while you perform `instrument` yourself. */
 export const backingFor = (chart: Chart, instrument: string): ScheduledNote[] =>
   chart.allNotes.filter((n) => n.instrument !== instrument)

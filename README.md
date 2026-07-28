@@ -296,6 +296,22 @@ This is also why the game has its own `liveVoice.ts` rather than reusing Luting
 Studio's `liveSynth.ts`: that module owns a private `AudioContext`, and a second
 clock is the one thing the judge can't tolerate.
 
+### Songs are let to ring out
+
+A run doesn't end on its last note. Switching to the results screen tears the
+audio context down, so on a song that finishes with a held chord that used to cut
+the decay off — the one moment a song most wants to be left alone. `runEndSec`
+keeps the clock going for **three seconds past the last note anyone plays**, yours
+or the band's — long enough for a held chord to fall away, short enough that it
+doesn't read as the game having hung.
+
+It's a floor on the silence at the end, not three seconds added to whatever is
+there, so a chart that already ends in a minute of nothing doesn't leave you
+watching an empty highway for a minute and three. (The upstream parser reports a
+song's length as exactly its last note's end — trailing rests don't extend it —
+so today that distinction never comes up. It's the rule that was wanted, though,
+and it costs a `Math.max`.)
+
 ### The playfield is always dark
 
 Light mode themes the menus, settings and results. The highway stays dark in

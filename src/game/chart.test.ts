@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildChart, backingFor, keyboardRange, rateDifficulty } from './chart'
+import { buildChart, backingFor, keyboardRange, rateDifficulty, runEndSec, OUTRO_SEC } from './chart'
 import type { GameNote } from './chart'
 
 const note = (timeSec: number, midi: number, durSec = 0.25): GameNote => ({
@@ -213,5 +213,30 @@ describe('keyboardRange', () => {
     const r = keyboardRange(track(30, 100))
     expect(r.lowMidi).toBeLessThanOrEqual(30)
     expect(r.highMidi).toBeGreaterThanOrEqual(100)
+  })
+})
+
+describe('runEndSec', () => {
+  it('holds the run open for five seconds after the last note', () => {
+    // Otherwise the results cut in over the final chord's decay.
+    const chart = buildChart(`#lute 240 il${long('ceg')}`)
+    const lastNote = Math.max(...chart.allNotes.map((n) => n.timeSec + n.durSec))
+    expect(runEndSec(chart)).toBeCloseTo(lastNote + OUTRO_SEC, 5)
+  })
+
+  it("counts the band's notes too, not just the part being played", () => {
+    // Your own part can finish long before the song does; it's the *song* that
+    // needs to be left to ring.
+    const chart = buildChart(`#lute 240 il${long('ceg')}|ibo2${long('ccc')}`)
+    const lastNote = Math.max(...chart.allNotes.map((n) => n.timeSec + n.durSec))
+    expect(runEndSec(chart)).toBeCloseTo(lastNote + OUTRO_SEC, 5)
+  })
+
+  it('adds nothing to a chart whose length already ends in silence', () => {
+    // The upstream parser never reports one, but the rule is a floor on the
+    // silence at the end rather than five seconds on top of it.
+    const chart = buildChart(`#lute 240 il${long('ceg')}`)
+    const padded = { ...chart, durationSec: chart.durationSec + 60 }
+    expect(runEndSec(padded)).toBe(padded.durationSec)
   })
 })

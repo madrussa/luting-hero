@@ -27,7 +27,11 @@ export interface TransportOptions {
   /** instrument codes to warm sample packs for, in Quality mode */
   prewarm: string[]
   onEnded?: () => void
-  /** song time (seconds) the whole chart is over */
+  /**
+   * Song time (seconds) the run is over — which is past the last note, not on
+   * it: the caller's end already carries the ring-out (see runEndSec), so
+   * nothing here has to guess at a margin for the final chord's decay.
+   */
   durationSec: number
 }
 
@@ -165,7 +169,7 @@ export class Transport {
   }
 
   private armEnd(): void {
-    const remainingMs = (this.opts.durationSec - this.now() + 1.5) * 1000
+    const remainingMs = (this.opts.durationSec - this.now()) * 1000
     this.endTimer = window.setTimeout(() => this.opts.onEnded?.(), Math.max(0, remainingMs))
   }
 }

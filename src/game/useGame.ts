@@ -17,7 +17,7 @@ import { Highway, HIGHWAY_THEME } from './highway'
 import type { HighwayEvent } from './highway'
 import { buildLayout, keyboardSlots } from './lanes'
 import type { Layout } from './lanes'
-import { backingFor, keyboardRange, soundsOf } from './chart'
+import { backingFor, keyboardRange, runEndSec, soundsOf } from './chart'
 import { buildBacking } from './backing'
 import type { BackingVoice } from './backing'
 import type { Chart, NoteSound, Track } from './chart'
@@ -174,6 +174,9 @@ export function useGame(
   settingsRef.current = settings
 
   const beatSec = chart.bpm > 0 ? 240 / chart.bpm : 0.5
+  // When the run is over: the chart's own end, or five seconds past its last
+  // note if the music runs right up to it. See runEndSec.
+  const endSec = runEndSec(chart)
 
   // A judgement names the note it claimed by id; playing it needs the note.
   const notesById = useMemo(() => new Map(track.notes.map((n) => [n.id, n])), [track])
@@ -203,7 +206,7 @@ export function useGame(
       backing: s.backing ? backingFor(chart, track.instrument) : [],
       leadInSec: leadIn,
       prewarm: [...new Set(chart.allNotes.map((n) => n.instrument))],
-      durationSec: chart.durationSec,
+      durationSec: endSec,
       onEnded: () => finish(),
     })
     transportRef.current = transport
@@ -252,7 +255,9 @@ export function useGame(
       pushHud(t, events[events.length - 1])
 
       if (phaseRef.current === 'countdown' && t >= 0) setPhase('playing')
-      if (phaseRef.current === 'playing' && j.isComplete() && t > chart.durationSec - 0.1) finish()
+      // Everything judged isn't reason enough to stop: the song is still
+      // sounding, and cutting it off there is what the ring-out exists to avoid.
+      if (phaseRef.current === 'playing' && j.isComplete() && t > endSec - 0.1) finish()
     }
 
     // Throttle the HUD: score and combo don't need 120 Hz, and re-rendering
