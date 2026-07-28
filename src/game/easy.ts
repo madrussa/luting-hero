@@ -63,6 +63,18 @@ export const RESTRIKE_SEC = 0.11
 export const keyBudget = (mode: KeyboardMode): number | null =>
   mode === 'superez' ? MAX_SUPER_EZ_KEYS : mode === 'easy' ? MAX_EASY_KEYS : null
 
+/**
+ * What each keyboard is called. In one place because it is named in three — the
+ * picker, the results screen and the shared score card — and a keyboard that
+ * goes by two names is a keyboard nobody can compare scores on.
+ */
+export const KEYBOARD_LABELS: Record<KeyboardMode, string> = {
+  superez: 'Super EZ',
+  easy: 'Easy',
+  hard: 'Hard',
+  impossible: 'Impossible',
+}
+
 export interface EasyKey {
   /** lane id — 0-based, left to right, which is also its binding slot */
   lane: number

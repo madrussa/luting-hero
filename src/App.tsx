@@ -6,11 +6,13 @@ import { Results } from './game/Results'
 import { SettingsPanel } from './game/SettingsPanel'
 import { buildChart } from './game/chart'
 import type { Track } from './game/chart'
+import { addLuting } from './game/library'
 import type { LibrarySong } from './game/library'
 import type { Stats } from './game/judge'
 import { toggleTheme, useSettings } from './game/settings'
 import { lutingHash } from './game/hash'
 import { playableTrack } from './game/easy'
+import { hasSongLink, readSongLink } from './game/share'
 import { bestKey, emptyRecord, loadSongRecord, saveSongRecord, withBest } from './game/songStore'
 import { enterSongScope, leaveSongScope } from './game/bindings'
 import type { SongRecord } from './game/songStore'
@@ -37,6 +39,8 @@ export default function App() {
   const [runKey, setRunKey] = useState(0)
   // What we remember about this song, keyed by a hash of its notation.
   const [record, setRecord] = useState<SongRecord | null>(null)
+  // What a shared link did, said once and then dropped.
+  const [linkNotice, setLinkNotice] = useState<string | null>(null)
   // The binding store is a module singleton, so it needs the record by ref
   // rather than through a closure that would go stale on the next edit.
   const recordRef = useRef<SongRecord | null>(null)
@@ -45,6 +49,60 @@ export default function App() {
   // Key bindings belong to the song. Opening one installs its mapping (falling
   // back to whatever you last used); leaving puts that back.
   useEffect(() => leaveSongScope, [])
+
+  /**
+   * A shared song arrives in the URL's fragment, whole.
+   *
+   * On load *and* on every fragment change, because those are two different
+   * arrivals: a cold open, and a link followed while the app is already running.
+   * The second is a same-document navigation — nothing reloads, no effect re-runs
+   * — so without `hashchange` the commonest case of all, clicking a friend's link
+   * with the game open in a tab, would silently do nothing.
+   *
+   * The fragment is then taken out of the address bar: left there it would re-add
+   * the song on every refresh, and travel on to whoever the tab or the URL were
+   * passed to next.
+   *
+   * Adding without asking is safe, because the library is keyed by a hash of the
+   * notation — a song you already have is recognised rather than duplicated — and
+   * going straight to its instrument picker is the whole point of being sent a
+   * link.
+   */
+  useEffect(() => {
+    const openShared = () => {
+      if (!hasSongLink(location.hash)) return
+      const shared = readSongLink(location.hash)
+      history.replaceState(null, '', location.pathname + location.search)
+      if (!shared) {
+        setLinkNotice('That shared link couldn’t be read — it may have been cut short on the way.')
+        return
+      }
+      void addLuting(shared).then((res) => {
+        const added = res.song ?? res.existing
+        if (!added) {
+          setLinkNotice('That shared link didn’t hold a playable luting.')
+          return
+        }
+        setLinkNotice(
+          res.status === 'duplicate'
+            ? `“${added.title}” was already in your collection.`
+            : `Added “${added.title}” from a shared link.`
+        )
+        pickSong(added)
+      })
+    }
+    openShared()
+    window.addEventListener('hashchange', openShared)
+    return () => window.removeEventListener('hashchange', openShared)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Long enough to read, then out of the way.
+  useEffect(() => {
+    if (!linkNotice) return
+    const t = setTimeout(() => setLinkNotice(null), 9000)
+    return () => clearTimeout(t)
+  }, [linkNotice])
 
   // Parsing is the expensive step, so it happens once per song rather than on
   // every screen change.
@@ -161,6 +219,8 @@ export default function App() {
         </header>
       )}
 
+      {!playing && linkNotice && <p className="notice link-notice">{linkNotice}</p>}
+
       {screen === 'songs' && <SongPicker onPick={pickSong} />}
 
       {screen === 'instruments' && chart && song && (
@@ -193,6 +253,10 @@ export default function App() {
           stats={stats}
           track={play.track}
           songTitle={song.title}
+          artist={song.artist}
+          songHash={song.hash}
+          keyboard={settings.keyboard}
+          hitWindow={settings.hitWindow}
           onRetry={() => {
             setRunKey((n) => n + 1)
             setScreen('play')

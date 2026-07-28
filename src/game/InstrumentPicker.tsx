@@ -2,7 +2,7 @@
 // whole part, however many luting voices it was written across.
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square, Copy, Check } from 'lucide-react'
+import { ArrowLeft, Play, Layers, Volume2, Loader, Trophy, Square, Copy, Check, Link2 } from 'lucide-react'
 import type { SongRecord } from './songStore'
 import { toLuteFile } from './library'
 import type { LibrarySong } from './library'
@@ -19,9 +19,10 @@ import {
 import { getPlaybackMode, loadBank } from '../luting-core/samples'
 import { updateSettings, useSettings } from './settings'
 import type { KeyboardMode } from './settings'
-import { MAX_EASY_KEYS, MAX_SUPER_EZ_KEYS, playableTrack } from './easy'
+import { KEYBOARD_LABELS, MAX_EASY_KEYS, MAX_SUPER_EZ_KEYS, playableTrack } from './easy'
 import type { EasyMap } from './easy'
 import { bestKey } from './songStore'
+import { songLink } from './share'
 import conducting from '../assets/conducting.webp'
 
 interface Props {
@@ -81,6 +82,7 @@ function Stars({ rating }: { rating: number }) {
 export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props) {
   const { keyboard } = useSettings()
   const [copied, setCopied] = useState(false)
+  const [linked, setLinked] = useState(false)
 
   // Every card describes the part *as the chosen keyboard will ask for it*.
   // That matters most in easy mode, where the fold genuinely changes the part —
@@ -123,17 +125,16 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
     }
   }
 
-  // Shared *with* its `//Title` / `//Author:` header lines, which is what lets
-  // whoever receives it paste the one blob and have the fields fill themselves
-  // in. The hash ignores comments, so a shared copy still dedupes against the
-  // same song if they already have it under another name.
-  const copySong = async () => {
-    const text = toLuteFile(song)
+  /**
+   * Put text on the clipboard, whatever the browser allows. The fallback is for
+   * insecure origins, where there is no async clipboard at all and failing
+   * silently would look like a broken button.
+   */
+  const toClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text)
+      return
     } catch {
-      // No async clipboard (an insecure origin, usually): the old way still
-      // works, and failing silently here would look like the button is broken.
       const el = document.createElement('textarea')
       el.value = text
       el.style.position = 'fixed'
@@ -143,8 +144,39 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
       document.execCommand('copy')
       el.remove()
     }
+  }
+
+  // Shared *with* its `//Title` / `//Author:` header lines, which is what lets
+  // whoever receives it paste the one blob and have the fields fill themselves
+  // in. The hash ignores comments, so a shared copy still dedupes against the
+  // same song if they already have it under another name.
+  const copySong = async () => {
+    await toClipboard(toLuteFile(song))
     setCopied(true)
     setTimeout(() => setCopied(false), 1600)
+  }
+
+  /**
+   * The same song as a link. The whole luting travels in the URL's fragment, so
+   * there is nothing to host and nothing to download at the other end — opening
+   * it adds the song and goes straight to this screen.
+   */
+  const shareLink = async () => {
+    const url = songLink(song, `${location.origin}${location.pathname}`)
+    // On a phone this offers the messaging apps; everywhere else it copies.
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: song.title, text: `${song.title} on Luting Hero`, url })
+        setLinked(true)
+        setTimeout(() => setLinked(false), 1600)
+        return
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+      }
+    }
+    await toClipboard(url)
+    setLinked(true)
+    setTimeout(() => setLinked(false), 1600)
   }
 
   const audition = async (code: string) => {
@@ -191,6 +223,14 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
         >
           {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy luting'}
         </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void shareLink()}
+          title="A link with the whole song in it — opening it adds the song"
+        >
+          {linked ? <Check size={15} /> : <Link2 size={15} />} {linked ? 'Link ready' : 'Share link'}
+        </button>
         <img src={conducting} alt="" className="picker-mascot" />
       </div>
 
@@ -201,12 +241,12 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
       <div className="mode-switch" role="radiogroup" aria-label="Keyboard">
         {(
           [
-            ['superez', 'Super EZ', `${MAX_SUPER_EZ_KEYS} keys, never faster than a hand`],
-            ['easy', 'Easy', `at most ${MAX_EASY_KEYS} keys, chords folded onto one`],
-            ['hard', 'Hard', 'one key per note the part plays'],
-            ['impossible', 'Impossible', 'the full keyboard across its range'],
+            ['superez', `${MAX_SUPER_EZ_KEYS} keys, never faster than a hand`],
+            ['easy', `at most ${MAX_EASY_KEYS} keys, chords folded onto one`],
+            ['hard', 'one key per note the part plays'],
+            ['impossible', 'the full keyboard across its range'],
           ] as const
-        ).map(([value, label, hint]) => (
+        ).map(([value, hint]) => (
           <button
             key={value}
             type="button"
@@ -215,7 +255,7 @@ export function InstrumentPicker({ chart, song, record, onBack, onPick }: Props)
             className={`mode-option ${keyboard === value ? 'on' : ''}`}
             onClick={() => updateSettings({ keyboard: value })}
           >
-            <strong>{label}</strong>
+            <strong>{KEYBOARD_LABELS[value]}</strong>
             <span>{hint}</span>
           </button>
         ))}

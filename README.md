@@ -22,9 +22,9 @@ npm test
 
 - **Build a collection** — paste a luting (its title and artist fill in from
   the `//` headers, if it has them), drop `.lute` files anywhere on the page,
-  or import a collection zip. Copy any song back out to share it. Every song in
-  the picker is really parsed, so the note counts and durations shown are the
-  real ones.
+  or import a collection zip. Copy any song back out to share it, or send a
+  **link with the whole song inside it**. Every song in the picker is really
+  parsed, so the note counts and durations shown are the real ones.
 - **Pick an instrument** — each one is rated 1–10 for difficulty from what it
   actually asks of you *on the keyboard you picked*, which is also on this
   screen: **Super EZ** folds the part onto four keys, **Easy** onto eight,
@@ -36,6 +36,9 @@ npm test
   song. They still play in the backing.
 - **Play it** — notes fall down a 3D highway onto the keyboard. Hit them as
   they cross the line. Everything you didn't pick keeps playing behind you.
+- **Share it** — the results screen names the part and the rules it was played
+  under, and **Share score** draws a card carrying both, plus a code that says
+  two players were comparing the same thing.
 
 ## The design decisions worth knowing about
 
@@ -344,6 +347,7 @@ also the library manager: add, import, export, delete.
 - **Copy luting**, on the song page next to Preview, puts the whole thing on
   the clipboard *with* those headers, so sharing a song is one paste at each
   end rather than a luting plus a retyped title.
+- **Share link**, beside it, puts the same song in a *URL* — see below.
 - **Import** takes loose `.lute` files, a collection zip, or a mix, and reads
   the conventional `//Title` / `//Author:` headers so nothing has to be
   described by hand. A file with no headers falls back to its filename
@@ -358,6 +362,63 @@ also the library manager: add, import, export, delete.
   from the stored title and artist so an edited title survives the round trip.
   Re-importing your own export therefore dedupes cleanly against what's already
   there.
+
+## Sharing
+
+Two different things, deliberately apart: a **song** can be handed to someone,
+and a **run** can be compared with someone.
+
+### A song fits in a link
+
+**Share link** on the song page produces a URL with the entire luting inside it.
+Opening it adds the song and lands on its instrument picker — nothing to
+download, nothing hosted, no account.
+
+The payload rides in the URL's **fragment**, which is the whole trick: a
+fragment is never sent to a server, so a song shared this way stays as private as
+one pasted by hand and no host has it in a log. It also isn't subject to anyone's
+URL length limit but the browser's, which is far above what a luting needs. It is
+deflated first, because notation is about as compressible as text gets — a
+1,300-note song is 923 characters of notation and about 950 of link, which
+survives a chat window. (A big song will still exceed Twitch's 500-character
+message limit; that's what pasting the luting itself is for.)
+
+Links are read **on load and on every fragment change**. The second is the case
+that's easy to miss: following a link with the game already open in a tab is a
+same-document navigation — nothing reloads and no effect re-runs — so without
+`hashchange` the commonest way of all to open a shared link would silently do
+nothing. The fragment is then taken *out* of the address bar, or it would re-add
+the song on every refresh and travel on to whoever the tab was passed to next.
+Adding needs no confirmation because the library is keyed by the notation's hash:
+a song you already have is recognised, not duplicated.
+
+### A run fits in a code
+
+The results screen ends with a code like `LH1-8f3a2c`, and **Share score** draws
+a 1200×630 card with the same code on it — the shape every chat client expects,
+drawn rather than screenshotted so it doesn't depend on the window it happened to
+be in, and carrying the instrument and the rules as prominently as the number.
+
+The code is a digest of the four things that decide what a score *means*: the
+song, the part, the keyboard, and the timing window. Two players compare codes,
+and if they match they know they were playing the same thing — Super EZ on
+Lenient is a different game from Impossible on Brutal, and one number without
+that context says nothing.
+
+It is **not** proof that a score is real, and the screen says so. There is no
+server here and no secret, so anyone determined can edit the picture or run a
+modified copy of the game, and no code the game prints about itself could stop
+them. It is for comparing honestly among people who want to, which is the case
+that actually comes up.
+
+Sharing takes the best route the browser offers and says which one it took: the
+system share sheet, then the clipboard, then a download. All three, because
+support is genuinely uneven — file sharing is a phone and Windows feature,
+image-to-clipboard is a desktop one — and a Share button that silently does
+nothing is worse than one that saves a file. The card is drawn when the run ends
+rather than when the button is pressed, because a share sheet has to open inside
+the gesture that asked for it and awaiting a canvas in between is enough for a
+browser to refuse.
 
 ## What's remembered, and where
 

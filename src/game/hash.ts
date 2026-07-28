@@ -98,6 +98,13 @@ export function lutingHash(text: string): string {
   return fnv1a(src, 0x811c9dc5) + fnv1a(src, 0x01000193)
 }
 
+/**
+ * A six-character digest of anything, for fingerprints that are read by eye
+ * rather than stored — see `conditionCode`. Short on purpose: it has to be
+ * comparable at a glance on a shared image.
+ */
+export const shortHash = (input: string): string => fnv1a(input, 0x811c9dc5).slice(0, 6)
+
 /** The BPM header, handy for showing a stored record without re-parsing. */
 export function lutingBpm(text: string): number {
   const m = text.match(HASH_HEADER)

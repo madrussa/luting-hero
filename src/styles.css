@@ -1491,6 +1491,74 @@ input[type='range'] {
   font-weight: 400;
   color: var(--text-dim);
 }
+/* The instrument, given its own line at its own size: a score with no part
+   attached says nothing about what was played. */
+.results-instrument {
+  margin: 8px 0 0;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--accent-2);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.results-instrument em {
+  font-size: 13px;
+  font-weight: 500;
+  font-style: normal;
+  color: var(--text-dim);
+  border-left: 1px solid var(--border);
+  padding-left: 9px;
+}
+/* The rules the run was judged by, which change what the number means. */
+.results-rules {
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+}
+.results-rules .rule {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+}
+.results-rules .rule.keyboard {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* The condition code: quotable without sending a picture at all. */
+.results-code {
+  margin: 14px 0 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  max-width: 46ch;
+}
+.results-code code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 17px;
+  letter-spacing: 1px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 12px;
+  user-select: all;
+}
+.results-code span {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.link-notice {
+  margin: 0 0 4px;
+}
 .results-mascot {
   width: 84px;
   height: 84px;
