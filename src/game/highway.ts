@@ -180,6 +180,34 @@ const over = (floor: string, ink: string, alpha: number): THREE.Color =>
   new THREE.Color(floor).lerp(new THREE.Color(ink), alpha)
 
 /**
+ * Hand an instanced mesh's freshly written instances to the GPU — and *only*
+ * those.
+ *
+ * The pools are sized for the worst case a chart can throw at the screen, which
+ * is an order of magnitude more than a typical frame uses: at eight to thirty
+ * notes a second and a second or two of approach, fifty of the nine hundred note
+ * slots are live. `needsUpdate` alone re-uploads the whole buffer regardless of
+ * `count`, so the note bars, their bloom, the strike marks and the flames
+ * between them were pushing a quarter of a megabyte per frame to say something
+ * about three kilobytes' worth of instances. An update range says how far the
+ * writes actually went, and three.js uploads that slice instead.
+ *
+ * Ranges are cleared by the renderer once it has read them, so they have to be
+ * declared each frame, after the writes and before the draw.
+ */
+function uploaded(mesh: THREE.InstancedMesh): void {
+  const { instanceMatrix, instanceColor, count } = mesh
+  instanceMatrix.clearUpdateRanges()
+  instanceMatrix.addUpdateRange(0, count * 16)
+  instanceMatrix.needsUpdate = true
+  if (instanceColor) {
+    instanceColor.clearUpdateRanges()
+    instanceColor.addUpdateRange(0, count * 3)
+    instanceColor.needsUpdate = true
+  }
+}
+
+/**
  * A soft wash, brightest at the far end and fading both toward the player and
  * out to the sides. Painted rather than shaded: one small canvas costs nothing
  * and keeps the material a plain MeshBasicMaterial whose colour the band can
@@ -410,6 +438,10 @@ export class Highway {
   /** 0 = white-key colour, 1 = black-key colour, chosen when an ember lights */
   private emberTint: Uint8Array = new Uint8Array(0)
   private emberSpawn = 0
+  /** embers still cooling, so a burnt-out pool can be skipped entirely */
+  private emberLive = 0
+  /** the white the fire goes at its core; a field, not a per-frame Color */
+  private readonly fireCore = new THREE.Color(FIRE_CORE)
 
   /** camera shake accumulator, driven by misses */
   private shake = 0
@@ -739,6 +771,17 @@ export class Highway {
    */
   private updateEmbers(dt: number): void {
     if (!this.embers) return
+    // Nothing burning and nothing still cooling: every slot is already parked
+    // out of frame and black from the last frame that ran, so walking the pool
+    // to park them again — and uploading both attributes to say so — buys
+    // nothing. Below the fire's starting combo, which is most of a run, this is
+    // the whole of the ember cost.
+    if (this.fire === 0 && this.emberLive === 0) {
+      this.embers.visible = false
+      return
+    }
+    this.embers.visible = true
+
     const s = this.emberState
     const pos = this.embers.geometry.getAttribute('position') as THREE.BufferAttribute
     const col = this.embers.geometry.getAttribute('color') as THREE.BufferAttribute
@@ -748,7 +791,8 @@ export class Highway {
     this.emberSpawn += dt * EMBER_RATE * this.fire
     // Embers in the highway's own colours, so they read as the notes throwing
     // off sparks rather than as a separate fire effect over the top.
-    const core = new THREE.Color(FIRE_CORE)
+    const core = this.fireCore
+    let live = 0
 
     for (let i = 0; i < EMBER_COUNT; i++) {
       const b = i * 8
@@ -780,6 +824,7 @@ export class Highway {
       s[b + 4] += dt * 0.6 // embers accelerate upward as they lighten
 
       const k = Math.max(0, s[b + 6] / s[b + 7])
+      if (k > 0) live++
       p[i * 3] = s[b]
       p[i * 3 + 1] = s[b + 1]
       p[i * 3 + 2] = s[b + 2]
@@ -789,6 +834,7 @@ export class Highway {
       c[i * 3 + 1] = this.scratch.g
       c[i * 3 + 2] = this.scratch.b
     }
+    this.emberLive = live
     pos.needsUpdate = true
     col.needsUpdate = true
   }
@@ -1219,6 +1265,11 @@ export class Highway {
   }
 
   setApproach(sec: number): void {
+    // The loop reads the setting every frame and pushes it here rather than
+    // watching for a change, so this is called at frame rate with the same
+    // number almost every time — and re-laying the hit zone out for it would be
+    // work done to arrive back where it already was.
+    if (this.opts.approachSec === sec) return
     this.opts.approachSec = sec
     // Scroll speed changes how much song is on screen, so it moves where a
     // millisecond lands and with it the whole hit zone.
@@ -1455,7 +1506,7 @@ export class Highway {
     const { approachSec } = this.opts
     const p = this.palette
     const fire = this.fire
-    const core = fire > 0 ? new THREE.Color(FIRE_CORE) : null
+    const core = this.fireCore
     const tilt = -this.baseCamera.pitch // stands the flames up to face the camera
     let flameCount = 0
 
@@ -1547,7 +1598,7 @@ export class Highway {
       let flicker = 1
       if (fire > 0 && s.verdict !== 'miss' && !overdue) {
         flicker = 1 + 0.18 * fire * Math.sin(t * 17 + s.note.id * 1.7)
-        this.scratch.lerp(core!, 0.26 * fire * fire)
+        this.scratch.lerp(core, 0.26 * fire * fire)
       }
       // Notes brighten as they approach, so the eye is pulled to what's next.
       const nearness = 1 - Math.max(0, Math.min(1, lead / approachSec))
@@ -1628,7 +1679,7 @@ export class Highway {
           this.flames.setMatrixAt(flameCount, this.dummy.matrix)
           this.scratch
             .copy(hue)
-            .lerp(core!, outer ? 0.1 : 0.4)
+            .lerp(core, outer ? 0.1 : 0.4)
             .multiplyScalar(fire * (outer ? 0.2 : 0.32) * (0.5 + 0.5 * nearness) * flicker)
           this.flames.setColorAt(flameCount, this.scratch)
           flameCount++
@@ -1639,20 +1690,16 @@ export class Highway {
 
     if (this.flames) {
       this.flames.count = flameCount
-      this.flames.instanceMatrix.needsUpdate = true
-      if (this.flames.instanceColor) this.flames.instanceColor.needsUpdate = true
+      uploaded(this.flames)
     }
 
     this.notes.count = n
     this.glow.count = n
-    this.notes.instanceMatrix.needsUpdate = true
-    this.glow.instanceMatrix.needsUpdate = true
-    if (this.notes.instanceColor) this.notes.instanceColor.needsUpdate = true
-    if (this.glow.instanceColor) this.glow.instanceColor.needsUpdate = true
+    uploaded(this.notes)
+    uploaded(this.glow)
 
     this.strikeMarks.count = marks
-    this.strikeMarks.instanceMatrix.needsUpdate = true
-    if (this.strikeMarks.instanceColor) this.strikeMarks.instanceColor.needsUpdate = true
+    uploaded(this.strikeMarks)
   }
 
   private drawBeats(t: number): void {
@@ -1673,8 +1720,7 @@ export class Highway {
       n++
     }
     this.beats.count = n
-    this.beats.instanceMatrix.needsUpdate = true
-    if (this.beats.instanceColor) this.beats.instanceColor.needsUpdate = true
+    uploaded(this.beats)
   }
 
   private drawStrikes(t: number): void {
@@ -1698,13 +1744,20 @@ export class Highway {
       n++
     }
     this.strikes.count = n
-    this.strikes.instanceMatrix.needsUpdate = true
-    if (this.strikes.instanceColor) this.strikes.instanceColor.needsUpdate = true
+    uploaded(this.strikes)
   }
 
   private drawBursts(t: number): void {
     let n = 0
-    this.bursts_ = this.bursts_.filter((b) => t - b.at <= BURST_SEC)
+    // Retired in place rather than by filtering into a fresh array: this runs
+    // every frame, and the rings are the one thing here that would otherwise
+    // hand the collector a new array a hundred-odd times a second for the sake
+    // of dropping one or two entries off the front.
+    let kept = 0
+    for (const b of this.bursts_) {
+      if (t - b.at <= BURST_SEC) this.bursts_[kept++] = b
+    }
+    this.bursts_.length = kept
     for (const b of this.bursts_) {
       if (n >= MAX_BURSTS) break
       const age = t - b.at
@@ -1722,7 +1775,6 @@ export class Highway {
       n++
     }
     this.bursts.count = n
-    this.bursts.instanceMatrix.needsUpdate = true
-    if (this.bursts.instanceColor) this.bursts.instanceColor.needsUpdate = true
+    uploaded(this.bursts)
   }
 }
