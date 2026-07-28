@@ -3,14 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/webp" href="/src/assets/luting.webp" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: the page paints out to the edges of the screen and
+         under the notch and the home indicator, instead of being letterboxed into
+         the safe area with the browser choosing what colour to fill the gaps.
+         What's inside then keeps clear of them with env(safe-area-inset-*). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Play your lutings. A rhythm game for luteboi songs." />
     <!-- The browser's own chrome, painted to match the page: on a phone the bar
          above and below the viewport is the app as far as the eye is concerned,
          and a white strip over a dark playfield reads as a rendering fault.
          Kept in step with the theme *setting* by applyTheme, since the setting is
-         what decides the page's colours rather than the OS preference. -->
+         what decides the page's colours rather than the OS preference.
+
+         Still declared, but it is no longer what does the work on an iPhone: iOS
+         26 Safari dropped support for theme-color and tints its bars by sampling
+         the body's background-colour instead. Chrome on Android and older Safari
+         still read this, and a WebKit fix is said to be coming, so it stays. -->
     <meta name="theme-color" content="#14121f" />
+    <!-- Before the stylesheet is even fetched, so the first paint is dark rather
+         than a white flash the width of the screen. The theme setting can still
+         say otherwise, and :root[data-theme='light'] does. -->
+    <meta name="color-scheme" content="dark" />
     <title>Luting Hero</title>
   </head>
   <body>

@@ -492,10 +492,24 @@ was. What needed doing was around the edges, all of it inside a
 
 - The **browser's own chrome** is painted to match. On a phone the bar above the
   viewport is part of the app as far as the eye is concerned, and a pale strip
-  over a dark playfield reads as a rendering fault. `theme-color` follows the
-  theme *setting* rather than `prefers-color-scheme`, since the setting is what
-  decides the page's colours — and it's read from `--bg` in the stylesheet, so the
-  two can't drift apart.
+  over a dark playfield reads as a rendering fault.
+
+  Which turns out to be more interesting than `theme-color`. **iOS 26 Safari
+  dropped support for it** and tints its bars by sampling the **body's
+  `background-color`** instead — and `background: <gradient>` sets that to
+  *transparent*, which iOS falls back to white for. Hence big white bands, on a
+  page whose every visible pixel was dark. The colour and the gradient are now
+  declared separately so the colour is real, `html` carries it too for the
+  overscroll, `color-scheme` says which kind of page this is so nothing native
+  renders light, and the viewport is `viewport-fit=cover` so the page paints under
+  the notch rather than being letterboxed with a colour Safari picks. `theme-color`
+  stays for Chrome on Android and older Safari, tracking the theme *setting*
+  rather than `prefers-color-scheme`, read from `--bg` so the two can't drift.
+
+  The one fixed element that spans the viewport is `.overlay`, which iOS 26 will
+  sample instead of the body while it's up. It is the page background at 78%, so
+  what it samples is near enough the same colour — worth keeping true if that wash
+  is ever restyled.
 - Rows that had no business wrapping stop wrapping: the title loses its tagline
   and fits on one line, the song page's header gives the title a row of its own
   and drops the conducting mascot, which is there to fill space a phone hasn't

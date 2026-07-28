@@ -3,6 +3,22 @@
    from that stylesheet a copy rather than a translation. */
 
 :root {
+  /* What the browser paints where the page doesn't reach, and how it renders
+     anything native.
+
+     Without this a page is light as far as the browser is concerned, whatever
+     colours it draws with — which on iOS Safari means big white bands above and
+     below the app where its own bars sit, and a white flash on load. `theme-color`
+     alone doesn't fix it: that tints the bars, while this is what decides the
+     colour behind everything, including the scroll overshoot and the form
+     controls. It follows the theme setting, because it is a statement of fact
+     about the page rather than a preference. */
+  color-scheme: dark;
+  /* On the root as well as on body: the canvas is what shows through when a short
+     page is over-scrolled, and a gradient propagated up from body gives Safari
+     nothing solid to sample when it tints its chrome. */
+  background: var(--bg);
+
   --bg: #14121f;
   --bg-soft: #1d1a2e;
   --panel: #242038;
@@ -23,6 +39,8 @@
 }
 
 :root[data-theme='light'] {
+  color-scheme: light;
+
   --bg: #eceaf4;
   --bg-soft: #f6f4fb;
   --panel: #ffffff;
@@ -67,7 +85,15 @@
 body {
   margin: 0;
   font-family: 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
-  background: radial-gradient(1200px 600px at 70% -10%, var(--bg-glow) 0%, var(--bg) 55%);
+  /* Colour and gradient declared apart, not as one shorthand.
+     `background: <gradient>` sets background-*color* to transparent, and iOS 26
+     Safari tints the bar above the page and the bar below it by sampling the
+     body's background-colour — a transparent one falls back to white, which is
+     where the white bands came from. It ignores `theme-color` entirely as of
+     iOS 26, so this declaration *is* the mechanism, not a belt-and-braces
+     addition to it. */
+  background-color: var(--bg);
+  background-image: radial-gradient(1200px 600px at 70% -10%, var(--bg-glow) 0%, var(--bg) 55%);
   color: var(--text);
   min-height: 100vh;
   overscroll-behavior: none;
@@ -88,20 +114,30 @@ a {
   color: var(--accent);
 }
 
+/* Every padding here adds the safe-area inset to what it already wanted, so the
+   page can paint under the notch and the home indicator — which is what stops the
+   browser filling those strips with a colour of its own choosing — while nothing
+   readable ends up beneath them. The insets are 0 everywhere but a notched phone,
+   so these calcs are the desktop values untouched. */
 .app {
   width: 100%;
   max-width: 1180px;
   margin: 0 auto;
-  padding: 16px clamp(12px, 2vw, 32px) 40px;
+  padding: calc(16px + env(safe-area-inset-top)) calc(clamp(12px, 2vw, 32px) + env(safe-area-inset-right))
+    calc(40px + env(safe-area-inset-bottom)) calc(clamp(12px, 2vw, 32px) + env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-/* The playfield wants the whole viewport, not a centred column. */
+/* The playfield wants the whole viewport, not a centred column. The insets are
+   padding rather than margin so the highway still reaches the screen's edges;
+   `box-sizing: border-box` keeps the whole thing 100dvh. Landscape is the way
+   you'd actually hold a phone for this, so the sides matter as much as the ends. */
 .app.playing {
   max-width: none;
-  padding: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
   height: 100dvh;
   gap: 0;
 }
@@ -1228,6 +1264,10 @@ input[type='range'] {
 }
 
 /* ---- overlays ---- */
+/* The one fixed element that spans the viewport — which on iOS 26 means Safari
+   tints its bars from *this* while an overlay is up, rather than from the body.
+   It's the page's own background at 78%, so what it samples is near enough the
+   same colour; that is worth keeping true if this wash is ever restyled. */
 .overlay {
   position: fixed;
   inset: 0;
@@ -1236,7 +1276,8 @@ input[type='range'] {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   z-index: 20;
 }
 .overlay-card {
@@ -1756,9 +1797,10 @@ input[type='range'] {
   }
 
   /* An overlay 20px from each edge of a 393px screen spends a tenth of its width
-     on margin. */
+     on margin. The insets stay in — this is the device that has them. */
   .overlay {
-    padding: 10px;
+    padding: calc(10px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right))
+      calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
   }
   .overlay-card {
     padding: 16px 16px 18px;
