@@ -137,7 +137,11 @@ export interface HighwayOptions {
   approachSec: number
   /** seconds per song beat, for the scrolling beat lines */
   beatSec: number
-  /** the Good window in seconds, so the highway knows when a note is overdue */
+  /**
+   * The Good window in seconds: how the highway knows when a note is overdue,
+   * and how far back from the hit line the hit zone reaches — depth here *is*
+   * time, so a window is a distance.
+   */
   goodSec: number
   showGuides: boolean
   /**
@@ -202,6 +206,29 @@ function farGlowTexture(): THREE.CanvasTexture {
   g.globalCompositeOperation = 'destination-out'
   g.fillStyle = sides
   g.fillRect(0, 0, 128, 128)
+  return new THREE.CanvasTexture(c)
+}
+
+/**
+ * The hit zone's wash: nothing where the window opens, strongest at the hit line.
+ *
+ * A gradient rather than a flat quad because a hard far edge on the floor reads
+ * as a step to be walked onto rather than a region of time, and because the
+ * brightness gradient is itself the information: the closer to the line, the
+ * better the hit.
+ */
+function hitZoneTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 4
+  c.height = 128
+  const g = c.getContext('2d')!
+  // v: 0 at the far edge, where the window opens; 1 at the hit line
+  const grad = g.createLinearGradient(0, 0, 0, 128)
+  grad.addColorStop(0, 'rgba(255,255,255,0)')
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.35)')
+  grad.addColorStop(1, 'rgba(255,255,255,1)')
+  g.fillStyle = grad
+  g.fillRect(0, 0, 4, 128)
   return new THREE.CanvasTexture(c)
 }
 
@@ -315,6 +342,8 @@ export class Highway {
   private strikes!: THREE.InstancedMesh
   private bursts!: THREE.InstancedMesh
   private hitBar!: THREE.Mesh
+  /** the judging windows, drawn on the floor: Good, Great, Perfect */
+  private hitZone!: THREE.Mesh[]
   private rails: THREE.Mesh[] = []
   private gridLines?: THREE.LineSegments
   private floor!: THREE.Mesh
@@ -441,6 +470,8 @@ export class Highway {
     this.buildFire()
     this.buildGrid()
     this.buildRails()
+
+    this.buildHitZone()
 
     this.hitBar = new THREE.Mesh(
       new THREE.PlaneGeometry(WIDTH, 0.06),
@@ -951,6 +982,89 @@ export class Highway {
   }
 
   /** Stretch everything built at unit depth onto the current runway length. */
+  /**
+   * The hit zone: how much slack you have, drawn on the floor where it falls.
+   *
+   * Timing tolerance was the one thing on the highway you couldn't see. The hit
+   * line says *when*, exactly, and players who keep missing usually aren't
+   * misjudging the line — they don't know they have any margin around it, so they
+   * either stab early or wait until they're certain and arrive late.
+   *
+   * Depth here *is* time, so the Good window is a band: it opens where the wash
+   * begins and closes at the hit line. The moment it opens gets a **line**,
+   * because that is a discrete event worth marking exactly — from there on, a
+   * strike counts.
+   *
+   * Only the Good window is drawn. Perfect and Great were tried as nested bands
+   * and as a second line, and neither survives contact with this geometry:
+   * perspective crushes everything approaching the near edge, so a Perfect window
+   * — a fortieth of the approach — is twenty pixels hiding behind the keyboard,
+   * and as a line in mint it is the same colour as half the notes. The wash
+   * brightening toward the line says "closer is better" without needing either.
+   *
+   * Only the early half is on screen, since the near edge of the runway is the
+   * hit line — the keyboard starts there. That is the half worth drawing anyway:
+   * it's the approach you can see coming and time yourself against.
+   */
+  private buildHitZone(): void {
+    const { theme } = this.opts
+    // A wash that fades in from nothing, rather than a slab: at these depths a
+    // hard far edge reads as a step in the floor to be walked onto.
+    const wash = new THREE.Mesh(
+      new THREE.PlaneGeometry(WIDTH, 1),
+      new THREE.MeshBasicMaterial({
+        map: hitZoneTexture(),
+        // The highway's own accent, pooling at the line: near-white desaturates
+        // against the purple floor into something that reads as a grey stain.
+        color: new THREE.Color(theme.accent),
+        transparent: true,
+        opacity: 0.34,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    )
+    // A thin bright edge where the window opens — the moment a note becomes
+    // hittable, which is the one instant worth marking exactly.
+    const opens = new THREE.Mesh(
+      new THREE.PlaneGeometry(WIDTH, 0.09),
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(theme.hitLine),
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    )
+    this.hitZone = [wash, opens]
+    for (const mesh of this.hitZone) {
+      mesh.rotation.x = -Math.PI / 2
+      mesh.position.y = 0.008
+      mesh.visible = false // until layoutHitZone has somewhere to put it
+      this.scene.add(mesh)
+    }
+    this.layoutHitZone()
+  }
+
+  /**
+   * Place the zone. Called whenever the runway's length or the mapping of time
+   * onto it changes — a re-tilt, a scroll-speed change, a different hit window —
+   * since each of those moves where a given number of milliseconds lands.
+   */
+  private layoutHitZone(): void {
+    if (!this.hitZone) return
+    const { approachSec, goodSec } = this.opts
+    if (approachSec <= 0 || this.depth <= 0) return
+    const [wash, opens] = this.hitZone
+
+    // How far back from the line the window reaches, in world units.
+    const good = (goodSec / approachSec) * this.depth
+    wash.visible = good > 0.05
+    wash.scale.set(1, good, 1)
+    wash.position.z = -good / 2
+    opens.visible = wash.visible
+    opens.position.z = -good
+  }
+
   private applyDepth(): void {
     const d = this.depth
     // Fog is set from how far the *camera* is from the end of the runway, not
@@ -966,6 +1080,7 @@ export class Highway {
       rail.position.z = -d / 2
     }
     if (this.gridLines) this.gridLines.scale.set(1, 1, d)
+    this.layoutHitZone()
     if (this.farGlow) {
       this.farGlow.scale.set(1, d * 0.55, 1)
       this.farGlow.position.set(0, 0.04, -d + d * 0.275)
@@ -1105,10 +1220,15 @@ export class Highway {
 
   setApproach(sec: number): void {
     this.opts.approachSec = sec
+    // Scroll speed changes how much song is on screen, so it moves where a
+    // millisecond lands and with it the whole hit zone.
+    this.layoutHitZone()
   }
 
   setGoodSec(sec: number): void {
     this.opts.goodSec = sec
+    // The window is drawn on the floor, so a different one is a different zone.
+    this.layoutHitZone()
   }
 
   /**
