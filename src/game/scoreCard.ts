@@ -35,6 +35,15 @@ const MINT = '#5ad1b3'
 const DANGER = '#ff7a90'
 const PANEL = '#242038'
 
+/**
+ * Where the card came from, printed on it. A score card is the one thing here
+ * that travels — it gets pasted into chats by people who have never seen the
+ * app — and without this it is a picture of a game nobody can go and find.
+ * Scheme dropped because every client linkifies it anyway and `https://` is
+ * three syllables of nothing on a poster.
+ */
+const SITE = 'madrussa.github.io/luting-hero'
+
 const SANS = "'Avenir Next', 'Segoe UI', system-ui, sans-serif"
 const MONO = "ui-monospace, 'SF Mono', Menlo, monospace"
 
@@ -161,11 +170,18 @@ export async function drawScoreCard(card: ScoreCard): Promise<Blob> {
   const textMax = W - pad - 380
   ctx.textBaseline = 'alphabetic'
 
-  // Branding, small and out of the way.
+  // Branding, small and out of the way, with the address opposite it: same
+  // size and weight so the two read as one line across the top rather than as
+  // a title and a footnote that wandered up there.
   ctx.fillStyle = DIM
   ctx.font = font(19, 700)
   ctx.letterSpacing = '3px'
   ctx.fillText('LUTING HERO', pad, y.brand)
+  ctx.letterSpacing = '1px'
+  ctx.fillStyle = MINT
+  ctx.textAlign = 'right'
+  ctx.fillText(SITE, W - pad, y.brand)
+  ctx.textAlign = 'left'
   ctx.letterSpacing = '0px'
 
   // The song.
@@ -242,8 +258,19 @@ export async function drawScoreCard(card: ScoreCard): Promise<Blob> {
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
 
+  // The mascot, mirrored. He is drawn facing right, and sitting in the bottom
+  // right corner that points him off the edge of the card; flipped, he faces
+  // back across it, at the grade and the score.
   const img = await loadMascot()
-  if (img) ctx.drawImage(img, W - 176, cy + 112, 128, 128)
+  if (img) {
+    const mx = W - 176
+    const my = cy + 112
+    ctx.save()
+    ctx.translate(mx + 128, my)
+    ctx.scale(-1, 1)
+    ctx.drawImage(img, 0, 0, 128, 128)
+    ctx.restore()
+  }
 
   // The code, bottom right and clear of the tallies, with what it means beside
   // it: a code nobody can read is decoration, and this one is the whole point of
