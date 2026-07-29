@@ -138,8 +138,8 @@ const ownKey = (n: GameNote): number | string => n.drum ?? n.midi ?? -1
  * so folding changes what you press, not what you hear.
  *
  * `windowSec` is how much of a moment counts as one. It defaults to what the
- * notation can genuinely stack at one instant; Super EZ opens it to a re-strike,
- * because a key you cannot hit twice that fast is a key you hit once.
+ * notation can genuinely stack at one instant; the folded keyboards open it to a
+ * re-strike, because a key you cannot hit twice that fast is a key you hit once.
  */
 export function mergeSimultaneous(
   notes: GameNote[],
@@ -157,7 +157,11 @@ export function mergeSimultaneous(
       const p = out[i]
       if (n.timeSec - p.timeSec > windowSec) break
       if (laneOf(p) !== lane) continue
-      p.durSec = Math.max(p.durSec, n.durSec)
+      // The survivor lasts until the last of them stops sounding — reckoned as
+      // an end, not as the longer duration, because the note being swallowed
+      // started later. At a re-strike's width apart that difference is most of a
+      // sixteenth, and taking the duration alone would cut the sustain short.
+      p.durSec = Math.max(p.durSec, n.timeSec + n.durSec - p.timeSec)
       p.volume = Math.max(p.volume, n.volume)
       if (n.midi !== p.midi || n.drum !== p.drum) {
         const also = (p.also ??= [])
@@ -170,6 +174,57 @@ export function mergeSimultaneous(
     }
     if (!merged) out.push({ ...n })
   }
+  return out
+}
+
+/**
+ * End every note where the next note on its key begins.
+ *
+ * A key can only sustain one note at a time, so two notes overlapping on one key
+ * is not a thing a player can be asked for: striking the second means letting go
+ * of the first, which under the sustain scoring costs the hold however well it was
+ * played — and on the highway the two sustains are one tube in one lane, drawn
+ * through each other.
+ *
+ * It arises two ways. A luting spreads one instrument over several voices, which
+ * is the only way its syntax can overlap notes, and two of those voices can hold
+ * the same pitch in turn; and a fold puts many pitches on one key, where the pitch
+ * a part sustains is rarely the pitch it plays next.
+ *
+ * Nothing is dropped and no pitch moves. Every note is still there to be struck
+ * and still sounds what it always sounded — it is simply only as long as it can
+ * actually be held, which is what the judge has always assumed, since a press
+ * settles the sustain already running in its lane. The overlap only ever existed
+ * in the drawing, and in the sustain the player was being marked against.
+ *
+ * The notes come back copied if any needed shortening and untouched if none did,
+ * so a part with no overlap in it costs nothing to run through here.
+ */
+export function clipToNextPress(
+  notes: GameNote[],
+  laneOf: (n: GameNote) => number | string = ownKey
+): GameNote[] {
+  /** index of the note each key is currently holding */
+  const holding = new Map<number | string, number>()
+  /** what to shorten, decided before anything is copied */
+  const clips: [index: number, durSec: number][] = []
+  for (let i = 0; i < notes.length; i++) {
+    const n = notes[i]
+    const lane = laneOf(n)
+    const held = holding.get(lane)
+    if (held !== undefined) {
+      const prev = notes[held]
+      // Only ever the note immediately before this one on this key: anything
+      // earlier was already given up to that one, so no note is clipped twice
+      // and a chain of overlaps resolves in this one pass.
+      if (prev.timeSec + prev.durSec > n.timeSec) clips.push([held, n.timeSec - prev.timeSec])
+    }
+    holding.set(lane, i)
+  }
+  if (clips.length === 0) return notes
+
+  const out = notes.map((n) => ({ ...n }))
+  for (const [i, durSec] of clips) out[i].durSec = durSec
   return out
 }
 
@@ -189,11 +244,19 @@ export function mergeSimultaneous(
  * Pass it and the rating is measured in keys rather than semitones, which is
  * how a kit has always been rated: the fold is only worth doing if the number
  * it produces reflects it.
+ *
+ * `wholeKeyboard` is for Impossible, the one mode that draws keys the part never
+ * plays. Every other keyboard draws only what the part needs, so on them a jump is
+ * to the next key along; there it is a jump across however many dead keys happen
+ * to lie between, each of them a key that scores nothing and breaks the combo.
+ * Without this the two rated identically, which is the one thing a difficulty
+ * number on four modes must not do.
  */
 export function rateDifficulty(
   notes: GameNote[],
   isDrums: boolean,
-  laneOf?: (n: GameNote) => number
+  laneOf?: (n: GameNote) => number,
+  wholeKeyboard = false
 ): Difficulty {
   if (notes.length === 0) {
     return { rating: 1, label: 'Empty', nps: 0, peakNps: 0, maxChord: 0, span: 0, keys: 0 }
@@ -285,10 +348,22 @@ export function rateDifficulty(
   // Nothing to reach for when the keys are a handful under one hand.
   const reach = positional ? 0 : Math.min(1, pitchSpan / 36)
 
+  // What share of the drawn keyboard is there only to be missed. Every keyboard
+  // but Impossible draws the part's own keys and nothing else, so this is zero on
+  // them by construction. On Impossible a chromatic run still scores zero — it
+  // really does use every key in its range — while a part that visits eight
+  // pitches across three octaves is threading past thirty keys that pay nothing
+  // and end a combo, which is the whole of what makes that mode its name.
+  const deadKeys = wholeKeyboard && pitchSpan > 0 ? 1 - Math.max(0, keyCount - 1) / pitchSpan : 0
+
   // Span carries less weight now that the key count is measured directly — it
   // was standing in for "how much keyboard is involved", and doing it badly.
+  // The dead keys are added on top of the other weights rather than sharing them
+  // out, because they are not a way of being hard that trades off against the
+  // rest: they are the same part with more room to go wrong in.
   const score =
-    0.3 * density + 0.3 * spread + 0.14 * chords + 0.1 * travel + 0.06 * reach + 0.1 * irregularity
+    0.3 * density + 0.3 * spread + 0.14 * chords + 0.1 * travel + 0.06 * reach + 0.1 * irregularity +
+    0.16 * deadKeys
   // Sparse tracks stay easy however wide they reach: a two-note-per-bar bass
   // line shouldn't inherit a hard rating from its octave leaps.
   const sustained = Math.min(1, nps / 3)
@@ -310,6 +385,20 @@ export const DIFFICULTY_LABELS = [
   'Medium', 'Medium', 'Hard', 'Hard',
   'Expert', 'Luting Hero',
 ]
+
+/**
+ * Hold a rating at or below what the same part scores on a keyboard that asks for
+ * more than this one does.
+ *
+ * The folded keyboards are measured in keys and the unfolded ones in semitones, so
+ * the two numbers come off scales that aren't quite the same — and nothing in the
+ * arithmetic itself stops the simpler keyboard landing on the higher number. It
+ * doesn't happen on any part I can find, which is exactly why it is worth pinning:
+ * the rating is there to help someone pick a mode, and a mode claiming to be
+ * harder than the one it simplifies is worse than showing no number at all.
+ */
+export const ratedNoHarderThan = (d: Difficulty, ceiling: number): Difficulty =>
+  d.rating <= ceiling ? d : { ...d, rating: ceiling, label: DIFFICULTY_LABELS[ceiling - 1] }
 
 /** Parse a luting and split it into one playable track per instrument. */
 export function buildChart(text: string): Chart {

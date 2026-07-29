@@ -25,7 +25,7 @@
 // the real pitch, and the whole chord when a chord folded onto that key — so
 // easy mode changes what you press, never what the song is.
 
-import { SIMULTANEITY_SEC, mergeSimultaneous, rateDifficulty } from './chart'
+import { clipToNextPress, mergeSimultaneous, rateDifficulty, ratedNoHarderThan } from './chart'
 import type { GameNote, NoteSound, Track } from './chart'
 import { isBlackKey, noteName } from './lanes'
 import type { KeyboardMode } from './settings'
@@ -45,17 +45,20 @@ export const MAX_EASY_KEYS = 8
 export const MAX_SUPER_EZ_KEYS = 4
 
 /**
- * The closest together Super EZ will ask for two presses of the same key.
+ * The closest together a folded keyboard will ask for two presses of the same
+ * key.
  *
- * Folding onto four keys puts far more of a part on each one, and a run that was
- * comfortable spread over the keyboard becomes one finger tapping faster than it
- * can go. So on that setting notes landing on one key within a re-strike of each
- * other are one press — the same rule as a chord folding onto one key, with the
- * window opened from "at the same instant" to "as good as". They all still
- * sound, so the run is heard in full and struck once.
+ * Folding puts far more of a part on each key, and a run that was comfortable
+ * spread over the keyboard becomes one finger tapping faster than it can go. So
+ * notes landing on one key within a re-strike of each other are one press — the
+ * same rule as a chord folding onto one key, with the window opened from "at the
+ * same instant" to "as good as". They all still sound, so the run is heard in
+ * full and struck once.
  *
- * A tenth of a second is about the limit of one finger repeating; the other
- * keyboards leave this alone and merge only what is genuinely simultaneous.
+ * A tenth of a second is about the limit of one finger repeating, and that is a
+ * fact about the finger rather than about how many keys are under it — so both
+ * folded keyboards use it. The unfolded ones leave it alone: there a key is a
+ * single pitch, and a fast repeat on one pitch is what the music actually wrote.
  */
 export const RESTRIKE_SEC = 0.11
 
@@ -280,34 +283,63 @@ export interface Playable {
 /**
  * The part as the chosen keyboard mode will actually ask you to play it.
  *
- * Only the folded modes change anything: the notes that landed on one key at one
- * moment become a single note that sounds all of them, and the difficulty is
- * re-rated against the folded keyboard, because a part you play on eight keys is
- * not the part you play on seventeen and the picker shouldn't claim it is.
+ * Every keyboard gives each key back before the next note needs it — a key cannot
+ * be held and struck at once, whether it carries one pitch or six. On top of that
+ * the folded modes make one note of the notes that land on a key close enough
+ * together to be a single press, and the difficulty is re-rated against the
+ * result, because a part you play on eight keys is not the part you play on
+ * seventeen and the picker shouldn't claim it is.
  */
 export function playableTrack(track: Track, mode: KeyboardMode): Playable {
   const maxKeys = keyBudget(mode)
-  if (maxKeys === null) return { track, easy: null }
+  if (maxKeys === null) {
+    // Nothing folds here, so a key is a pitch and the only overlap left is a part
+    // holding one pitch in two voices at once. Shortening a sustain doesn't change
+    // what the part reaches for, so the rating stands on what the keyboard is.
+    const notes = clipToNextPress(track.notes)
+    const rated =
+      mode === 'impossible'
+        ? // The one keyboard that draws keys the part never plays. Hard draws the
+          // part's own pitches and nothing else, so it keeps the rating it was
+          // built with; Impossible is that same part with the unplayed semitones
+          // put back in between, and is measured accordingly.
+          rateDifficulty(notes, track.isDrums, undefined, true)
+        : track.difficulty
+    if (notes === track.notes && rated === track.difficulty) return { track, easy: null }
+    return { track: { ...track, notes, difficulty: rated }, easy: null }
+  }
   const easy = buildEasyMap(track, maxKeys)
   // Nothing to fold onto: a part with no pitches and no kit isn't playable
   // anyway, and an empty keyboard has no geometry.
   if (easy.keys.length === 0) return { track, easy: null }
 
   const laneOf = (n: GameNote) => easy.laneOf(n)
-  const notes = mergeSimultaneous(
-    track.notes,
-    laneOf,
-    mode === 'superez' ? RESTRIKE_SEC : SIMULTANEITY_SEC
-  )
+  // Merge first, so that what the clip is left looking at is genuinely two
+  // presses rather than one the fold hasn't collapsed yet.
+  const merged = mergeSimultaneous(track.notes, laneOf, RESTRIKE_SEC)
+  const notes = clipToNextPress(merged, laneOf)
   // A part that came through untouched is drawn on exactly the keyboard hard
   // mode would draw for it, so it is the same part and keeps the same rating.
   // Re-measuring it in keys instead of semitones could otherwise nudge it a step
   // *up* on the easier setting, which is worse than saying nothing.
-  if (notes.length === track.notes.length && !easy.keys.some((k) => k.folded)) {
+  if (
+    merged.length === track.notes.length &&
+    notes === merged &&
+    !easy.keys.some((k) => k.folded)
+  ) {
     return { track, easy }
   }
   return {
-    track: { ...track, notes, difficulty: rateDifficulty(notes, track.isDrums, laneOf) },
+    track: {
+      ...track,
+      notes,
+      // Never above what the unfolded keyboard asks: the fold only ever takes work
+      // away, whatever the arithmetic on two different scales happens to say.
+      difficulty: ratedNoHarderThan(
+        rateDifficulty(notes, track.isDrums, laneOf),
+        track.difficulty.rating
+      ),
+    },
     easy,
   }
 }

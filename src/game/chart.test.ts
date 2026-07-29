@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { buildChart, backingFor, keyboardRange, rateDifficulty, runEndSec, OUTRO_SEC } from './chart'
+import {
+  buildChart, backingFor, clipToNextPress, keyboardRange, rateDifficulty, ratedNoHarderThan,
+  runEndSec, DIFFICULTY_LABELS, OUTRO_SEC,
+} from './chart'
 import type { GameNote } from './chart'
 
 const note = (timeSec: number, midi: number, durSec = 0.25): GameNote => ({
@@ -113,7 +116,83 @@ describe('buildChart', () => {
   })
 })
 
+describe('clipToNextPress', () => {
+  it('ends a sustain where the next note on its key begins', () => {
+    const notes = [note(0, 60, 4), note(1.5, 60, 1)]
+    const out = clipToNextPress(notes)
+    expect(out.map((n) => n.durSec)).toEqual([1.5, 1])
+    // and the notes it was given are untouched: they belong to the chart
+    expect(notes[0].durSec).toBe(4)
+  })
+
+  it('never loses a note, or what it sounds', () => {
+    const notes = [note(0, 60, 4), note(1, 62, 4), note(2, 60, 1)]
+    const out = clipToNextPress(notes)
+    expect(out.map((n) => [n.timeSec, n.midi])).toEqual(notes.map((n) => [n.timeSec, n.midi]))
+  })
+
+  it('leaves an overlap across two keys alone', () => {
+    const notes = [note(0, 60, 4), note(1.5, 67, 1)]
+    expect(clipToNextPress(notes)).toBe(notes)
+  })
+
+  it('hands the part straight back when nothing overlaps', () => {
+    // The picker re-derives every track whenever the keyboard changes, so the
+    // common case has to cost nothing.
+    const notes = Array.from({ length: 20 }, (_, i) => note(i, 60, 0.5))
+    expect(clipToNextPress(notes)).toBe(notes)
+  })
+
+  it('resolves a chain of overlaps in one pass', () => {
+    // Three sustains on one key, each starting inside the one before.
+    const out = clipToNextPress([note(0, 60, 3), note(1, 60, 3), note(2, 60, 3)])
+    expect(out.map((n) => n.durSec)).toEqual([1, 1, 3])
+  })
+
+  it('measures a kit by its pieces', () => {
+    const hit = (timeSec: number, drum: string, durSec: number): GameNote => ({
+      id: 0, timeSec, durSec, drum, volume: 1, voice: 0,
+    })
+    const out = clipToNextPress([hit(0, 'o0a', 2), hit(0.5, 'o1c', 2), hit(1, 'o0a', 1)])
+    expect(out.map((n) => n.durSec)).toEqual([1, 2, 1])
+  })
+})
+
+describe('ratedNoHarderThan', () => {
+  it('pins a rating that came out above the keyboard it simplifies', () => {
+    const d = rateDifficulty(Array.from({ length: 60 }, (_, i) => note(i * 0.12, 60 + (i % 9))), false)
+    const held = ratedNoHarderThan(d, d.rating - 2)
+    expect(held.rating).toBe(d.rating - 2)
+    expect(held.label).toBe(DIFFICULTY_LABELS[d.rating - 3])
+    // and nothing else about the measurement is rewritten
+    expect(held.peakNps).toBe(d.peakNps)
+    expect(held.keys).toBe(d.keys)
+  })
+
+  it('leaves a rating that was already under the ceiling exactly as it was', () => {
+    const d = rateDifficulty([note(0, 60), note(1, 62)], false)
+    expect(ratedNoHarderThan(d, 10)).toBe(d)
+  })
+})
+
 describe('rateDifficulty', () => {
+  it('counts the keys a part never plays, on the keyboard that draws them', () => {
+    // The same forty notes: eight pitches five semitones apart. On the keyboard
+    // that draws only those eight, they sit side by side; on the one that draws
+    // every semitone, there are four dead keys between each pair.
+    const notes = Array.from({ length: 40 }, (_, i) => note(i * 0.25, 48 + (i % 8) * 5))
+    expect(rateDifficulty(notes, false, undefined, true).rating).toBeGreaterThan(
+      rateDifficulty(notes, false).rating
+    )
+  })
+
+  it('counts none when the part uses every key in its range', () => {
+    const notes = Array.from({ length: 40 }, (_, i) => note(i * 0.25, 48 + (i % 12)))
+    expect(rateDifficulty(notes, false, undefined, true).rating).toBe(
+      rateDifficulty(notes, false).rating
+    )
+  })
+
   it('rates a slow single line easier than a fast one', () => {
     const slow = Array.from({ length: 20 }, (_, i) => note(i * 1.0, 60))
     const fast = Array.from({ length: 200 }, (_, i) => note(i * 0.1, 60))
