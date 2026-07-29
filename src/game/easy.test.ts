@@ -160,11 +160,15 @@ describe('Super EZ', () => {
     expect(play.track.notes.filter((n) => n.timeSec === 100)).toHaveLength(2)
   })
 
-  it('leaves the re-strike alone on every other keyboard', () => {
-    // Eight keys is still a hand's worth per finger; only the four-key floor
-    // makes that promise.
+  it('shares the re-strike with easy mode, and leaves the unfolded keyboards alone', () => {
+    // One finger repeats at about ten a second whichever folded keyboard it is
+    // sitting on. On the unfolded ones a key is a single pitch, and a fast repeat
+    // on one pitch is what the music wrote.
     const notes = [note(0, 60), note(0.05, 60), ...Array.from({ length: 12 }, (_, i) => note(5 + i, 72))]
-    for (const mode of ['easy', 'hard', 'impossible'] as const) {
+    for (const mode of ['easy', 'superez'] as const) {
+      expect(playableTrack(melodic(notes), mode).track.notes).toHaveLength(notes.length - 1)
+    }
+    for (const mode of ['hard', 'impossible'] as const) {
       expect(playableTrack(melodic(notes), mode).track.notes).toHaveLength(notes.length)
     }
   })
@@ -178,12 +182,64 @@ describe('Super EZ', () => {
 })
 
 describe('playableTrack', () => {
-  it('leaves the part alone on the unfolded keyboards', () => {
+  it('leaves the part alone on hard, whose keys are the part\'s own', () => {
     const track = chromatic()
+    const play = playableTrack(track, 'hard')
+    expect(play.easy).toBeNull()
+    expect(play.track).toBe(track)
+  })
+
+  it('still hands a key back on the unfolded keyboards', () => {
+    // Nothing folds here, but a luting spreads one instrument over several
+    // voices, and two of them can hold the same pitch in turn. One key, one
+    // note at a time, on every keyboard there is.
+    const track = melodic([...chromatic().notes, note(100, 60, 4), note(101.5, 60, 1)])
     for (const mode of ['hard', 'impossible'] as const) {
       const play = playableTrack(track, mode)
       expect(play.easy).toBeNull()
-      expect(play.track).toBe(track)
+      expect(play.track.notes).toHaveLength(track.notes.length)
+      expect(play.track.notes.find((n) => n.timeSec === 100)!.durSec).toBeCloseTo(1.5)
+    }
+    // and a shorter sustain isn't a different thing to reach for, so hard's own
+    // rating is untouched by the clip
+    expect(playableTrack(track, 'hard').track.difficulty).toBe(track.difficulty)
+  })
+
+  it('rates impossible above hard when the part leaves keys unplayed', () => {
+    // Eight pitches spread over three octaves. Hard draws those eight keys side
+    // by side; impossible puts the thirty semitones the part never touches back in
+    // between them, and every one is a key that pays nothing and ends a combo.
+    const sparse = melodic(
+      Array.from({ length: 40 }, (_, i) => note(i * 0.25, 48 + (i % 8) * 5))
+    )
+    const hard = playableTrack(sparse, 'hard').track.difficulty.rating
+    const impossible = playableTrack(sparse, 'impossible').track.difficulty.rating
+    expect(impossible).toBeGreaterThan(hard)
+  })
+
+  it('rates them alike on a part that uses every key in its range', () => {
+    // A chromatic run has no dead keys to thread past: on that part the full
+    // keyboard *is* the part's own keyboard, and claiming otherwise would be
+    // punishing it for a gap it doesn't have.
+    const track = chromatic()
+    expect(playableTrack(track, 'impossible').track.difficulty.rating).toBe(
+      playableTrack(track, 'hard').track.difficulty.rating
+    )
+  })
+
+  it('rates a kit the same either way: a pad is a pad', () => {
+    const chart = buildChart(`#lute 240 id${'o0ao1co3co4a'.repeat(8)}`)
+    const kit = chart.tracks.find((t) => t.instrument === 'd')!
+    expect(playableTrack(kit, 'impossible').track.difficulty.rating).toBe(
+      playableTrack(kit, 'hard').track.difficulty.rating
+    )
+  })
+
+  it('never lets a folded keyboard claim to be the harder one', () => {
+    const track = chromatic()
+    const hard = playableTrack(track, 'hard').track.difficulty.rating
+    for (const mode of ['easy', 'superez'] as const) {
+      expect(playableTrack(track, mode).track.difficulty.rating).toBeLessThanOrEqual(hard)
     }
   })
 
@@ -213,6 +269,41 @@ describe('playableTrack', () => {
       'easy'
     )
     expect(play.track.notes.filter((n) => n.timeSec === 100)).toHaveLength(2)
+  })
+
+  it('ends a note where the next note on its key begins', () => {
+    // A held pitch and a later one that folds onto the same key: the second can
+    // only be struck by letting the first go, so the first is only as long as it
+    // can actually be held — and the two never occupy one lane at once.
+    const track = chromatic()
+    const easy = buildEasyMap(track)
+    const [a, b] = easy.keys.find((k) => k.midis.length >= 2)!.midis
+    const play = playableTrack(melodic([...track.notes, note(100, a, 4), note(101.5, b, 1)]), 'easy')
+    const held = play.track.notes.find((n) => n.timeSec === 100)!
+    expect(held.durSec).toBeCloseTo(1.5)
+    expect(play.track.notes.find((n) => n.timeSec === 101.5)).toBeDefined()
+  })
+
+  it('leaves an overlap across two keys alone: two hands, two notes', () => {
+    const track = chromatic()
+    const easy = buildEasyMap(track)
+    const wide = [easy.keys[0].midis[0], easy.keys[3].midis[0]]
+    const play = playableTrack(
+      melodic([...track.notes, note(100, wide[0], 4), note(101.5, wide[1], 1)]),
+      'easy'
+    )
+    expect(play.track.notes.find((n) => n.timeSec === 100)!.durSec).toBe(4)
+  })
+
+  it('sustains a merged press to the end of the last note it swallowed', () => {
+    // The second note starts inside the re-strike window and runs on past the
+    // first: one press, held until the music it stands for has finished.
+    const play = playableTrack(
+      melodic([note(0, 60, 0.2), note(0.1, 61, 0.5), ...Array.from({ length: 12 }, (_, i) => note(5 + i, 72 + i * 2))]),
+      'superez'
+    )
+    const struck = play.track.notes.find((n) => n.timeSec === 0)!
+    expect(struck.durSec).toBeCloseTo(0.6)
   })
 
   it('never drops a note that stands alone', () => {

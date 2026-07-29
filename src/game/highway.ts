@@ -162,6 +162,14 @@ const DOME_LEN = 0.55
 const DOME_LEN_MIN = 0.35
 const DOME_LEN_MAX = 0.9
 /**
+ * The shortest a dome may be cut to for the sake of the next note on its key.
+ * Below this it would be too small to see, and a note nobody can see is a note
+ * nobody can hit — better two domes just touching than one of them gone. At every
+ * scroll speed this is under the 12 ms the notation can express, so on real music
+ * it never comes up.
+ */
+const DOME_LEN_FLOOR = 0.12
+/**
  * How far back into the dome the tube stops. A hemisphere tapers to nothing at
  * its rim, so a tube ending at the same z leaves its own end cap standing proud
  * of the dome's leading edge — a bright disc hanging off the front of every
@@ -561,6 +569,14 @@ export class Highway {
   /** lane id -> lane, rebuilt only when the layout changes */
   private laneById: Map<number, Layout['lanes'][number]>
   private states: NoteState[] = []
+  /**
+   * Seconds from each note to the next one on its own key, parallel to `states`.
+   * The dome is a fixed size in world units rather than a length of song, so on a
+   * fast repeat of one key two of them would stand in the same place; this is what
+   * the dome is capped against. Per key, by definition — notes on different keys
+   * are in different lanes and never meet however close together they are.
+   */
+  private nextOnKey: number[] = []
   /** index of the earliest note still worth drawing */
   private cursor = 0
   /** lane -> the most recent judgement there, for the lane flash */
@@ -1413,6 +1429,15 @@ export class Highway {
     // forward walk rather than a scan of the whole chart every frame.
     this.states = states
     this.cursor = 0
+    // Walked backwards, so each note learns how long its key has before it is
+    // wanted again in one pass rather than by searching forward every frame.
+    this.nextOnKey = new Array<number>(states.length).fill(Infinity)
+    const soonest = new Map<number, number>()
+    for (let i = states.length - 1; i >= 0; i--) {
+      const next = soonest.get(states[i].lane)
+      if (next !== undefined) this.nextOnKey[i] = next - states[i].note.timeSec
+      soonest.set(states[i].lane, states[i].note.timeSec)
+    }
   }
 
   /** Hand over the band: who's playing behind you, and every note they play. */
@@ -1738,7 +1763,15 @@ export class Highway {
       const soundLen = this.opts.layout.isDrums
         ? DRUM_NOTE_LEN
         : (s.note.durSec / approachSec) * this.depth
-      const domeSize = clamp(barW * DOME_LEN, DOME_LEN_MIN, DOME_LEN_MAX)
+      // The dome is sized off the lane, not off the note — so on a key struck
+      // again sooner than a dome is long, the next one would stand inside this
+      // one and the two would read as a single lump. It gives way instead: capped
+      // at the distance to the next note on its own key, the two meet and stop.
+      // Both are still drawn, because both are still notes that have to be hit.
+      const domeSize = Math.min(
+        clamp(barW * DOME_LEN, DOME_LEN_MIN, DOME_LEN_MAX),
+        Math.max(DOME_LEN_FLOOR, (this.nextOnKey[i] / approachSec) * this.depth)
+      )
 
       // The hit line eats the bar rather than the bar vanishing when struck:
       // the near end is pinned there once the onset has passed, so what's left
