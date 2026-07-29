@@ -43,8 +43,22 @@ export type FlashMap = Record<number, { verdict: Flash; seq: number }>
 /** How long a key's flash lasts; must outlast the CSS animation. */
 const FLASH_MS = 450
 
-/** Beats of count-in before the first note, on top of the chart's own lead-in. */
-const COUNT_IN_BEATS = 4
+/**
+ * The count-in: five seconds, one number a second, before the chart's own
+ * lead-in.
+ *
+ * Wall-clock rather than musical, which is a deliberate reversal. This used to
+ * be four beats of the chart's own tempo, so how long the player actually got
+ * was whatever the arrangement happened to imply — 1.7 seconds on a luting at
+ * 552, eight at 120. Counting in on the beat does hand you the tempo, but the
+ * tempo is already arriving: it is in the backing, and in the beat lines
+ * rolling up the highway before the first note. What the count-in is for is the
+ * few seconds it takes to find the keys and settle, and that is a number of
+ * seconds, the same number every time, whatever the song is doing.
+ */
+const COUNT_IN_SEC = 5
+const COUNT_IN_TICK_SEC = 1
+const COUNT_IN_TICKS = Math.round(COUNT_IN_SEC / COUNT_IN_TICK_SEC)
 
 export interface HudSnapshot {
   stats: Stats
@@ -113,7 +127,7 @@ export function useGame(
     },
     accuracy: 0,
     progress: 0,
-    countdown: COUNT_IN_BEATS,
+    countdown: COUNT_IN_TICKS,
   })
   const [held, setHeld] = useState<Set<number>>(new Set())
   const [finalStats, setFinalStats] = useState<Stats | null>(null)
@@ -201,7 +215,7 @@ export function useGame(
     const judge = new Judge(track, lanes.laneOfNote, hitWindowById(s.hitWindow), s.offsetMs)
     judgeRef.current = judge
 
-    const leadIn = COUNT_IN_BEATS * beatSec
+    const leadIn = COUNT_IN_SEC
     const transport = new Transport({
       backing: s.backing ? backingFor(chart, track.instrument) : [],
       leadInSec: leadIn,
@@ -275,7 +289,7 @@ export function useGame(
         stats,
         accuracy: accuracy(stats, track.notes.length),
         progress: chart.durationSec > 0 ? Math.max(0, Math.min(1, t / chart.durationSec)) : 0,
-        countdown: t < 0 ? Math.ceil(-t / beatSec) : 0,
+        countdown: t < 0 ? Math.min(COUNT_IN_TICKS, Math.ceil(-t / COUNT_IN_TICK_SEC)) : 0,
         last: last ?? prev.last,
       }))
     }

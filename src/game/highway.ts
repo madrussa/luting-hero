@@ -9,8 +9,11 @@
 // Notes are drawn from a fixed pool of instances rather than one mesh each.
 // Charts run to thousands of notes; only the second or two on screen needs
 // geometry, so a cursor walks the time-sorted chart and hands the visible slice
-// to two InstancedMeshes — the solid bar, and an oversized additive copy that
-// gives the neon bloom without a post-processing pass.
+// to InstancedMeshes — a solid pass and an additive copy that gives the neon
+// bloom without a post-processing pass.
+//
+// A note is two shapes, not one: a dome at the onset and a thinner tube for the
+// sustain behind it. See DOME_* below for why.
 
 import * as THREE from 'three'
 import type { Layout } from './lanes'
@@ -23,8 +26,8 @@ import type { BackingPulse, BackingVoice, Envelope } from './backing'
 // geometry. The camera is then fitted to the slab (see fitCamera), which is
 // what keeps the near edge lined up with the keyboard at any window shape.
 const WIDTH = 10
+/** the centreline a note's tube runs along; its dome is based off this too */
 const NOTE_Y = 0.09
-const NOTE_THICKNESS = 0.16
 
 /**
  * The runway's depth is *derived*, not chosen: it's fitted so the far end of
@@ -68,6 +71,12 @@ export interface HighwayTheme {
   noteB: string
   hitLine: string
   missed: string
+  /**
+   * Let go of a sustain too early. Deliberately not `missed`: the note is still
+   * there to be grabbed back, and dressing a recoverable mistake in the same red
+   * as a lost note says the wrong thing about what just happened.
+   */
+  dropped: string
 }
 
 export const HIGHWAY_THEME: HighwayTheme = {
@@ -83,6 +92,7 @@ export const HIGHWAY_THEME: HighwayTheme = {
   noteB: '#5ad1b3',
   hitLine: '#e8e4f5',
   missed: '#ff7a90',
+  dropped: '#ffcf5c',
 }
 
 const MAX_NOTES = 900
@@ -107,8 +117,6 @@ const WAVE_GAP = 1.7
 const MAX_BACKING_VOICES = 8
 /** seconds for the drum flash driving the rails to fall back */
 const DRUM_DECAY = 0.26
-/** how long a judged note lingers before the pool stops drawing it */
-const HIT_FLASH_SEC = 0.22
 /**
  * Drum bars are a fixed length rather than their written duration. A kick's
  * `durSec` is the slot it occupies in the notation, not how long the drum
@@ -117,19 +125,157 @@ const HIT_FLASH_SEC = 0.22
  */
 const DRUM_NOTE_LEN = 0.9
 
-/**
- * How much silence in front of a note counts as "no seam you can see", and so
- * earns it a strike mark — as a fraction of the approach, because that is what
- * the runway's whole length is. A twentieth of the screen's worth of gap is a
- * few pixels at the far end and still thin where it matters, which is exactly
- * the case where a run of notes on one key reads as a single held bar.
- */
-const MARK_GAP = 0.05
+// ---- the shape of a note ---------------------------------------------------
+//
+// A dome at the onset, a thinner tube behind it.
+//
+// Uniform bars are unreadable in exactly the case that matters. Two notes on one
+// key with no daylight between them draw as a single unbroken slab — the seam is
+// a line a pixel wide at best, and by the time it is close enough to see, you
+// have already missed the second note. A flat mark painted on the bar was the
+// first fix and the wrong one: it is a texture, so it competes with the bloom and
+// the combo fire for the same contrast, and it still leaves the bar one
+// continuous silhouette.
+//
+// Making the onset a different *shape* solves it at the silhouette instead. A
+// dome has a top, so it catches its own highlight and reads as a discrete thing
+// to strike at any distance and any brightness; the sustain drops to a low,
+// narrow tube that plainly belongs to the dome in front of it. A run of eighths
+// on one key becomes a row of beads, which is what it sounds like.
+//
+// Everything below is a fraction of the lane, then clamped in world units: lane
+// widths run from a twentieth of the highway to a quarter of it, and a dome sized
+// only by its lane would be a bead at one end and a hillside at the other.
 
-/** The biggest a strike mark gets, whatever the lane is wide. */
-const MARK_MAX_SIZE = 0.8
+/**
+ * The dome is deliberately narrower than its lane. Filling the lane the way the
+ * old flat bar did makes two domes side by side merge into one wide blob, which
+ * is the same unreadable silhouette in a new costume; leaving daylight down each
+ * divider is what makes a chord read as three things rather than one.
+ */
+const DOME_W = 0.72
+/** dome height and depth, as a fraction of the bar's width, then clamped */
+const DOME_H = 0.3
+const DOME_H_MIN = 0.2
+const DOME_H_MAX = 0.5
+const DOME_LEN = 0.55
+const DOME_LEN_MIN = 0.35
+const DOME_LEN_MAX = 0.9
+/**
+ * How far back into the dome the tube stops. A hemisphere tapers to nothing at
+ * its rim, so a tube ending at the same z leaves its own end cap standing proud
+ * of the dome's leading edge — a bright disc hanging off the front of every
+ * note. Ending the tube where the dome still has some shell over it hides the
+ * cap, and the thing at the note's leading edge is then the dome, which is the
+ * whole point of the shape.
+ */
+const TUBE_TUCK = 0.45
+/**
+ * The sustain tube's width as a fraction of the bar's, and its height as a
+ * fraction of its own width — kept near half, because a tube read from a tilted
+ * camera needs some height to be a tube at all. Flatten it and it goes back to
+ * being the thin bar this change replaced.
+ */
+const TUBE_W = 0.3
+const TUBE_W_MAX = 0.6
+const TUBE_H = 0.8
+const TUBE_H_MAX = 0.3
 const STRIKE_SEC = 0.4
 const BURST_SEC = 0.45
+
+// ---- striking, holding, letting go -----------------------------------------
+//
+// Three things happen to a note you play — you strike it, you hold it, you let
+// it go — and each has to be legible on its own, at the hit line, while the
+// rest of the chart is still coming at you.
+//
+// The strike used to be a scale-up on the dome, and it was almost never seen:
+// the hit line eats a note as it crosses, and a dome is under a world unit
+// long, so at any normal scroll speed it is swallowed inside three or four
+// frames and the pop is over before the eye finds it. So a struck dome is no
+// longer eaten. It is punched down into the floor and then *carried off with
+// the track*, riding past the hit line and out of frame the way the rest of the
+// music does, rather than sticking to the line while the highway slides out
+// from under it. The sink is the backstop: the floor is opaque and writes
+// depth, so a dome still on screen when the press finishes is buried rather
+// than switched off, and there is no frame where it blinks out.
+//
+// Unstruck notes are still eaten at the line, and that contrast is the whole
+// signal — the notes you played leave with the track, the ones you didn't go
+// under it.
+/** how long the press runs; the note is buried by the end of it */
+const PRESS_SEC = 0.17
+/** at full press: how far the dome flattens, and how much it splays doing it */
+const PRESS_SQUASH = 0.5
+const PRESS_SPREAD = 0.22
+/**
+ * How far the press drives the dome down, as a multiple of its own height. Over
+ * one so the crown finishes clear under the floor and the last frame of the
+ * animation is hidden rather than merely short.
+ */
+const PRESS_SINK = 1.15
+/** how far a struck note's colour is pushed to white at the moment of the hit */
+const PRESS_WHITE = 0.85
+
+/**
+ * Holding. The sustain you are actually on has to separate itself from the ones
+ * queued up behind it, so it goes bright and part-way to white and breathes
+ * slightly — the tube stops being the note's quiet half for as long as it's the
+ * one you're playing.
+ */
+const HOLD_WHITE = 0.24
+/** the breath in a held note, in radians per second */
+const HOLD_PULSE = 9
+
+/**
+ * Letting go, drawn where it happens: a ring opening in the note's own lane at
+ * the point on the track you let go of — the hit line at that instant — and
+ * then scrolling on with everything else. Anchoring it to the *moment* rather
+ * than to the line is the whole point: pinned to the line it hangs there after
+ * the note it belongs to has gone, which reads as a mark on the playfield
+ * instead of a thing that happened to a note.
+ *
+ * What that anchor costs is the obvious shape. The camera puts the hit line at
+ * the very bottom of the frame, so a ring *centred* on the release point is
+ * born with half of itself already below the edge and is gone inside two
+ * frames — drawn, uploaded, and never seen. So the release point is the ring's
+ * near *edge* rather than its centre: it opens above the line, into the track
+ * the note came down, and it grows faster than the highway scrolls. The near
+ * edge leaves at the track's rate, which is the honest part; the far arc sweeps
+ * back up it, which is the part you can actually see.
+ *
+ * It fires for one kind of note only: one claimed *late*, grabbed after its
+ * Good window had closed off a sustain that was still sounding. On an ordinary
+ * release there is nothing here worth saying — an early let-go already turns the
+ * whole abandoned tail amber, and a sustain seen out needs no ceremony — so a
+ * ring on every one of them was decoration on the busiest part of the track.
+ * A late save is the case with no other marker: you fumbled the onset, caught
+ * the note anyway, and the pulse is the receipt for the recovery.
+ *
+ * Colour still separates how it ended — the hit line's own near-white for a
+ * save you then held out, the warning yellow for one you dropped again. The
+ * clean one is the wider of the two, since the dropped one has that amber tail
+ * saying it too.
+ */
+const RELEASE_SEC = 0.28
+/** how fast a ring opens, in world units of radius per unit of its life */
+const RELEASE_GROWTH_EARLY = 3.2
+const RELEASE_GROWTH_CLEAN = 4.4
+const MAX_RELEASES = 16
+/**
+ * How long a note stays in the pool after its far end has gone under the hit
+ * line. It outlasts both the press and the release ring on purpose: those are
+ * drawn from the note's own state, so a note retired while one is still running
+ * takes the effect with it.
+ */
+const RETIRE_SEC = 0.45
+/**
+ * The slack at the end of a sustain. Key-up lands a few milliseconds before the
+ * written end more often than not, and coming off exactly on the beat is a
+ * clean finish rather than a drop — judged to the sample, this would pulse
+ * yellow at players who did nothing wrong.
+ */
+const RELEASE_GRACE_SEC = 0.09
 
 export interface HighwayOptions {
   layout: Layout
@@ -165,15 +311,18 @@ interface Palette {
   noteA: THREE.Color
   noteB: THREE.Color
   missed: THREE.Color
+  dropped: THREE.Color
   beat: THREE.Color
   bar: THREE.Color
   strikeHit: THREE.Color
   strikeMiss: THREE.Color
-  /** what a note's colour is pushed toward for its strike mark: the dark behind it */
-  mark: THREE.Color
   burstPerfect: THREE.Color
   burstOther: THREE.Color
+  /** the ring for a sustain seen out to its end */
+  held: THREE.Color
 }
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
 /** Composite an ink colour over the opaque floor at the given alpha. */
 const over = (floor: string, ink: string, alpha: number): THREE.Color =>
@@ -187,7 +336,7 @@ const over = (floor: string, ink: string, alpha: number): THREE.Color =>
  * is an order of magnitude more than a typical frame uses: at eight to thirty
  * notes a second and a second or two of approach, fifty of the nine hundred note
  * slots are live. `needsUpdate` alone re-uploads the whole buffer regardless of
- * `count`, so the note bars, their bloom, the strike marks and the flames
+ * `count`, so the note domes, their tubes, both blooms and the flames
  * between them were pushing a quarter of a megabyte per frame to say something
  * about three kilobytes' worth of instances. An update range says how far the
  * writes actually went, and three.js uploads that slice instead.
@@ -323,24 +472,35 @@ const FIRE_FULL_COMBO = 40
 const FIRE_RISE_SEC = 0.28
 const FIRE_FALL_SEC = 0.7
 /**
+ * The white that the fire's core, a struck note and a held one all push toward.
+ *
  * The fire takes each note's *own* colour rather than a fire palette. Amber
  * flames on a purple highway read as a separate effect pasted on top; keeping
  * the hue and pushing it toward white at the core makes the note itself look
- * like it's burning.
+ * like it's burning. The strike and the hold work the same way and for the same
+ * reason — a note you are playing is the note, brighter, not a different object.
  */
-const FIRE_CORE = '#ffffff'
+const CORE_WHITE = '#ffffff'
 const EMBER_COUNT = 260
 /** embers per second at full blaze */
 const EMBER_RATE = 110
 /**
- * Flames are emitted along the *length* of a note, not once at its centre — a
- * held bar should burn end to end rather than carry a single tongue in the
- * middle. One quad per FLAME_SPACING world units, capped so a very long note
- * can't flood the pool on its own.
+ * Flames are emitted along the *length* of a note's tube, not once at its
+ * centre — a held note should burn end to end rather than carry a single tongue
+ * in the middle. One quad per FLAME_SPACING world units, capped so a very long
+ * note can't flood the pool on its own. The dome gets one more on top of these.
  */
 const FLAME_SPACING = 0.85
 const MAX_FLAMES_PER_NOTE = 8
 const MAX_FLAMES = 700
+/**
+ * How wide a tongue is relative to the shape it rises from: the soft outer layer
+ * spreads past its edges, the bright core sits inside them. Anything that
+ * doesn't straddle the shape this way stops reading as the note being alight and
+ * starts reading as a separate glow parked near it.
+ */
+const FLAME_SPREAD = 1.5
+const FLAME_CORE_SPREAD = 0.85
 
 /**
  * Where the stars live: a wide, deep slab *below* the highway rather than a sky
@@ -362,13 +522,16 @@ export class Highway {
   private readonly scene = new THREE.Scene()
   private readonly camera: THREE.PerspectiveCamera
 
-  private notes!: THREE.InstancedMesh
-  private glow!: THREE.InstancedMesh
-  /** one disc per note that follows another too closely to see the seam */
-  private strikeMarks!: THREE.InstancedMesh
+  /** the sustain tubes, and the domes at their onsets, each with a bloom copy */
+  private tails!: THREE.InstancedMesh
+  private tailGlow!: THREE.InstancedMesh
+  private domes!: THREE.InstancedMesh
+  private domeGlow!: THREE.InstancedMesh
   private beats!: THREE.InstancedMesh
   private strikes!: THREE.InstancedMesh
   private bursts!: THREE.InstancedMesh
+  /** rings marking a sustain let go of, filled straight from the note states */
+  private releases!: THREE.InstancedMesh
   private hitBar!: THREE.Mesh
   /** the judging windows, drawn on the floor: Good, Great, Perfect */
   private hitZone!: THREE.Mesh[]
@@ -389,7 +552,8 @@ export class Highway {
    */
   private readonly dummy = new THREE.Object3D()
   private readonly scratch = new THREE.Color()
-  private readonly markInk = new THREE.Color()
+  /** the tube's colour, held apart so the dome keeps the undimmed one */
+  private readonly tint = new THREE.Color()
   private readonly probe = new THREE.Vector3()
 
   private opts: HighwayOptions
@@ -397,8 +561,6 @@ export class Highway {
   /** lane id -> lane, rebuilt only when the layout changes */
   private laneById: Map<number, Layout['lanes'][number]>
   private states: NoteState[] = []
-  /** seconds of silence before each note in its own lane; see setNotes */
-  private gapBefore: number[] = []
   /** index of the earliest note still worth drawing */
   private cursor = 0
   /** lane -> the most recent judgement there, for the lane flash */
@@ -440,8 +602,8 @@ export class Highway {
   private emberSpawn = 0
   /** embers still cooling, so a burnt-out pool can be skipped entirely */
   private emberLive = 0
-  /** the white the fire goes at its core; a field, not a per-frame Color */
-  private readonly fireCore = new THREE.Color(FIRE_CORE)
+  /** the white a note goes toward when it burns, is struck or is held */
+  private readonly white = new THREE.Color(CORE_WHITE)
 
   /** camera shake accumulator, driven by misses */
   private shake = 0
@@ -472,13 +634,14 @@ export class Highway {
       noteA: new THREE.Color(t.noteA),
       noteB: new THREE.Color(t.noteB),
       missed: new THREE.Color(t.missed),
+      dropped: new THREE.Color(t.dropped),
       beat: over(t.floor, t.ink, t.beatAlpha),
       bar: over(t.floor, t.ink, t.barAlpha),
       strikeHit: new THREE.Color(t.noteA),
       strikeMiss: new THREE.Color(t.missed),
-      mark: new THREE.Color(t.bg),
       burstPerfect: new THREE.Color(t.noteB),
       burstOther: new THREE.Color(t.noteA),
+      held: new THREE.Color(t.hitLine),
     }
   }
 
@@ -555,43 +718,64 @@ export class Highway {
     this.bursts.frustumCulled = false
     this.scene.add(this.bursts)
 
-    this.buildBand()
-
-    const noteGeo = new THREE.BoxGeometry(1, NOTE_THICKNESS, 1)
-    this.notes = new THREE.InstancedMesh(noteGeo, new THREE.MeshBasicMaterial({ fog: true }), MAX_NOTES)
-    this.notes.frustumCulled = false
-    this.scene.add(this.notes)
-
-    this.glow = new THREE.InstancedMesh(
-      noteGeo,
+    // Thicker-walled than the hit rings, and drawn from the note states rather
+    // than from an event queue: a release is a fact about a note that is still
+    // on screen, so there is nothing to buffer and nothing to retire.
+    this.releases = new THREE.InstancedMesh(
+      new THREE.RingGeometry(0.34, 0.5, 28),
       new THREE.MeshBasicMaterial({
         transparent: true,
-        opacity: 0.35,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      MAX_RELEASES
+    )
+    this.releases.frustumCulled = false
+    this.scene.add(this.releases)
+
+    this.buildBand()
+
+    // Both note shapes are built as unit shapes — one wide, one tall, one deep,
+    // and sitting so that scaling reads straight off as (width, height, depth).
+    // That is what lets a lane's width and a note's duration be a scale rather
+    // than a rebuild.
+
+    // The sustain tube: a cylinder laid down the lane. Its axis is baked along z
+    // in the geometry rather than rotated per instance, so the instance matrix
+    // stays a plain translate-and-scale like everything else here.
+    const tubeGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 10, 1, false)
+    tubeGeo.rotateX(Math.PI / 2)
+
+    // The dome: the top half of a sphere, stretched so its flat face is at y = 0
+    // and its crown at y = 1. It needs more segments than the tube does — the
+    // dome nearest the hit line is the biggest thing on screen, and a coarse one
+    // shows a flat facet across its crown exactly where the eye is.
+    const domeGeo = new THREE.SphereGeometry(0.5, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2)
+    domeGeo.scale(1, 2, 1)
+
+    const solid = () => new THREE.MeshBasicMaterial({ fog: true })
+    const bloom = (opacity: number) =>
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         fog: true,
-      }),
-      MAX_NOTES
-    )
-    this.glow.frustumCulled = false
-    this.scene.add(this.glow)
+      })
 
-    // The strike marks that sit on top of the bars. A disc, not a line across
-    // the bar: a line reads as the seam it is trying to point out, where a disc
-    // reads as a thing to hit.
-    //
-    // Marked transparent although it is opaque, purely to put it in the
-    // transparent pass *after* the note bloom — an additive glow drawn over the
-    // mark would wash out exactly the contrast the mark is made of, and on a big
-    // combo the flames make that worse, not better.
-    this.strikeMarks = new THREE.InstancedMesh(
-      new THREE.CircleGeometry(0.5, 14),
-      new THREE.MeshBasicMaterial({ fog: true, transparent: true, depthWrite: false }),
-      MAX_NOTES
-    )
-    this.strikeMarks.frustumCulled = false
-    this.strikeMarks.renderOrder = 2
-    this.scene.add(this.strikeMarks)
+    this.tails = new THREE.InstancedMesh(tubeGeo, solid(), MAX_NOTES)
+    this.domes = new THREE.InstancedMesh(domeGeo, solid(), MAX_NOTES)
+    // Both blooms stay under the old flat bar's 0.35. A dome has a lit crown and
+    // a shaded flank of its own, and that shading is the whole reason the shape
+    // reads — pile the same additive glow on top and it flattens back into the
+    // silhouette this change exists to break up.
+    this.tailGlow = new THREE.InstancedMesh(tubeGeo, bloom(0.22), MAX_NOTES)
+    this.domeGlow = new THREE.InstancedMesh(domeGeo, bloom(0.26), MAX_NOTES)
+    for (const m of [this.tails, this.domes, this.tailGlow, this.domeGlow]) {
+      m.frustumCulled = false
+      this.scene.add(m)
+    }
   }
 
   /**
@@ -791,7 +975,7 @@ export class Highway {
     this.emberSpawn += dt * EMBER_RATE * this.fire
     // Embers in the highway's own colours, so they read as the notes throwing
     // off sparks rather than as a separate fire effect over the top.
-    const core = this.fireCore
+    const core = this.white
     let live = 0
 
     for (let i = 0; i < EMBER_COUNT; i++) {
@@ -1229,18 +1413,6 @@ export class Highway {
     // forward walk rather than a scan of the whole chart every frame.
     this.states = states
     this.cursor = 0
-
-    // How much silence sits in front of each note in its own lane. A run of
-    // notes on one key with no gaps between them draws as one unbroken bar —
-    // the seam where you have to strike again is a line a pixel wide, if that —
-    // so each note that follows another closely gets a strike mark. Precomputed
-    // here: it's a property of the chart, not of the frame.
-    const lastEnd = new Map<number, number>()
-    this.gapBefore = states.map((s) => {
-      const end = lastEnd.get(s.lane)
-      lastEnd.set(s.lane, s.note.timeSec + s.note.durSec)
-      return end === undefined ? Infinity : s.note.timeSec - end
-    })
   }
 
   /** Hand over the band: who's playing behind you, and every note they play. */
@@ -1506,20 +1678,30 @@ export class Highway {
     const { approachSec } = this.opts
     const p = this.palette
     const fire = this.fire
-    const core = this.fireCore
+    const white = this.white
     const tilt = -this.baseCamera.pitch // stands the flames up to face the camera
+    // World units a second of song covers. Anything anchored to a moment rather
+    // than to a place on the track scrolls at this rate.
+    const scroll = this.depth / approachSec
     let flameCount = 0
 
     // Retire notes whose bar has fully passed the hit line.
     while (this.cursor < this.states.length) {
       const s = this.states[this.cursor]
-      if (s.note.timeSec + s.note.durSec >= t - 0.3) break
+      if (s.note.timeSec + s.note.durSec >= t - RETIRE_SEC) break
       this.cursor++
     }
 
-    let n = 0
-    let marks = 0
-    for (let i = this.cursor; i < this.states.length && n < MAX_NOTES; i++) {
+    // Two pools, filled independently: a note on the line has a tube and no dome
+    // left, and a sixteenth is all dome and no tube, so the counts diverge.
+    let tubes = 0
+    let domes = 0
+    let rings = 0
+    for (
+      let i = this.cursor;
+      i < this.states.length && tubes < MAX_NOTES && domes < MAX_NOTES;
+      i++
+    ) {
       const s = this.states[i]
       const lead = s.note.timeSec - t
       if (lead > approachSec) break // sorted: everything after is further out
@@ -1527,22 +1709,51 @@ export class Highway {
       if (!lane) continue
 
       const hitAge = s.hitAtSec !== undefined ? t - s.hitAtSec : -1
+      // 1 the instant the note is struck, falling to 0 as the press bottoms
+      // out; 0 for a note never struck at all. `sink` is its complement, and
+      // only for notes actually being pressed — as a bare `1 - press` it would
+      // bury every dome on the highway.
+      const press = hitAge >= 0 && hitAge < PRESS_SEC ? 1 - hitAge / PRESS_SEC : 0
+      const sink = press > 0 ? 1 - press : 0
+      const releasedAt = s.releasedAtSec ?? Infinity
+      const releaseAge = t - releasedAt
+      // Late saves only — see RELEASE_SEC. No length test alongside it: the
+      // judge will only hand out a late claim on a note it already counts as a
+      // sustain, so the gate is one condition rather than two that could
+      // silently close on each other.
+      const releasing = s.late === true && releaseAge >= 0 && releaseAge < RELEASE_SEC
+      // Let go before the note was over, with a little slack at the end of it.
+      const letGoEarly = releasedAt < s.note.timeSec + s.note.durSec - RELEASE_GRACE_SEC
 
       // z runs -depth (just spawned) → 0 (on the hit line). The note's onset is
       // its leading edge and its duration trails away from the player, because
       // the far end of the bar is the part that arrives last.
       const z = (lead / approachSec) * -this.depth
-      const lengthZ = this.opts.layout.isDrums
+      const barW = lane.width * WIDTH * 0.84
+      // How long the note really is. This used to carry a floor of half a unit,
+      // because a sixteenth drawn at its true length was a bar too short to see
+      // — but the dome is now what makes a note visible, and it is a fixed size.
+      // So the duration is left honest and a staccato note is one dome and no
+      // tube at all, which is the shape of what you actually have to play.
+      const soundLen = this.opts.layout.isDrums
         ? DRUM_NOTE_LEN
-        : Math.max(0.5, (s.note.durSec / approachSec) * this.depth)
+        : (s.note.durSec / approachSec) * this.depth
+      const domeSize = clamp(barW * DOME_LEN, DOME_LEN_MIN, DOME_LEN_MAX)
 
       // The hit line eats the bar rather than the bar vanishing when struck:
       // the near end is pinned there once the onset has passed, so what's left
       // on screen is exactly the sustain still to be held. Gone when the far
-      // end arrives.
+      // end arrives — and a note is on screen for at least its own dome's
+      // length, so the dome has room to be eaten rather than blinking out.
+      const lengthZ = Math.max(soundLen, domeSize)
       const zFar = z - lengthZ
       const zNear = Math.min(z, 0)
-      if (zFar >= 0) continue
+      // Fully under, and nothing of the player's own still playing out over it.
+      // A struck dome is caught at the line rather than swallowed, and a release
+      // ring opens exactly as the last of a sustain goes under, so either one
+      // outliving the note it belongs to has to keep the note in the walk — the
+      // shapes below all fall to zero length on their own once zFar is past.
+      if (zFar >= 0 && press <= 0 && !releasing) continue
       const visibleLen = zNear - zFar
 
       const missAge = s.verdict === 'miss' ? t - (s.note.timeSec + 0.15) : -1
@@ -1557,39 +1768,78 @@ export class Highway {
       const dropped =
         s.holdable && s.verdict !== undefined && s.verdict !== 'miss' && !holding && lead < 0
 
-      let scale = 1
+      const base =
+        s.verdict === 'miss' || overdue ? p.missed : dropped ? p.dropped : lane.black ? p.noteB : p.noteA
       let intensity = 1
-      // A short pop at the moment of the hit, then back to normal — the bar
-      // stays, so the pop is punctuation rather than an exit.
-      if (hitAge >= 0 && hitAge < HIT_FLASH_SEC) {
-        scale = 1 + 0.5 * (1 - hitAge / HIT_FLASH_SEC)
-      }
+      /** how far the note's colour is pushed toward white */
+      let toWhite = 0
+      /**
+       * The tube's brightness against the dome's. The tail is the quieter half
+       * of a note — it is what the dome has already announced — except while
+       * it's the one you are holding, when it is the only part of the note left
+       * and the thing you are being scored on.
+       */
+      let tubeShare = 0.7
+
       if (missAge > 0) {
         intensity = Math.max(0.16, 1 - missAge / 0.6)
       } else if (overdue) {
         intensity = 0.7 + 0.3 * Math.sin(t * 12)
       } else if (dropped) {
-        // let go early: the rest of the note is still there to be re-grabbed,
-        // drawn dim so it's clear it isn't scoring
-        intensity = 0.3
+        // Let go early. The rest of the note is still there to be grabbed back,
+        // so it stays plainly visible rather than being dimmed nearly out: the
+        // warning colour says it has stopped scoring, and the breath says it is
+        // still something you can do something about.
+        intensity = 0.45 + 0.12 * Math.sin(t * HOLD_PULSE)
+        tubeShare = 0.85
       } else if (holding) {
         intensity = 1.25
+        toWhite = HOLD_WHITE + 0.08 * Math.sin(t * HOLD_PULSE)
+        tubeShare = 1
+      }
+      // The strike outranks whatever the note was doing before it: for the
+      // length of the press it is white-hot, and it is the one moment the note
+      // is allowed to be the brightest thing on the highway.
+      if (press > 0) {
+        toWhite = Math.max(toWhite, PRESS_WHITE * press)
+        intensity = Math.max(intensity, 1 + 0.9 * press)
       }
 
-      this.dummy.rotation.set(0, 0, 0)
-      this.dummy.position.set(
-        this.laneX(lane.center),
-        NOTE_Y + (lane.black ? 0.05 : 0),
-        zFar + visibleLen / 2
-      )
-      this.dummy.scale.set(lane.width * WIDTH * 0.84 * scale, scale, visibleLen)
-      this.dummy.updateMatrix()
-      this.notes.setMatrixAt(n, this.dummy.matrix)
-      this.glow.setMatrixAt(n, this.dummy.matrix)
+      const x = this.laneX(lane.center)
+      const y = NOTE_Y + (lane.black ? 0.05 : 0)
+      const tubeW = Math.min(barW * TUBE_W, TUBE_W_MAX)
+      const tubeH = Math.min(tubeW * TUBE_H, TUBE_H_MAX)
 
-      this.scratch.copy(
-        s.verdict === 'miss' || overdue ? p.missed : lane.black ? p.noteB : p.noteA
-      )
+      // The dome at the onset: the moment you strike, as a shape rather than a
+      // marking. Until it is struck the hit line eats it exactly as it eats the
+      // tube — pinned at the line once the onset has passed, and shortening as
+      // the rest of it goes under. Once struck it stops being eaten and simply
+      // keeps travelling, full length, off the near edge with the rest of the
+      // track. The sustain behind it is still eaten either way, because how much
+      // of it is left to hold is information the player needs.
+      const domeZ = press > 0 ? z : zNear
+      const domeLen = press > 0 ? domeSize : Math.min(domeSize - Math.max(0, z), visibleLen)
+      const domeH = clamp(barW * DOME_H, DOME_H_MIN, DOME_H_MAX)
+      const hasDome = domeLen > 0.02
+      const domeBack = domeZ - domeLen
+      // The tube's near end stops inside the dome rather than at the note's
+      // leading edge — see TUBE_TUCK. The tuck is taken from however much of the
+      // dome is still behind the line and therefore still over the tube's end,
+      // which covers both cases at once: it shrinks as an unstruck dome is
+      // eaten, and it falls away as a struck one travels off. Without that
+      // second half, a struck sustain spends the press detached from the hit
+      // line by the width of a dome that has already left.
+      const covered = hasDome ? clamp(zNear - domeBack, 0, domeLen) : 0
+      const tubeNear = zNear - covered * TUBE_TUCK
+      // Its far end is where the note really stops, and it is only drawn if that
+      // is clear of the back of the dome. A drum hit is a fixed short length and
+      // a staccato note is shorter still, so both would otherwise end their tube
+      // right where the dome tapers away — and a cylinder's end cap standing in
+      // that gap is a bright disc stuck to the back of every note.
+      const tubeFar = z - soundLen
+      const tubeLen = tubeFar < domeBack - 0.06 ? tubeNear - tubeFar : 0
+
+      this.scratch.copy(base)
       // On a combo the notes come in burning. They keep their own hue and go
       // white at the core rather than turning amber, so the fire looks like the
       // note itself alight instead of an effect laid over it. Each flickers on
@@ -1598,52 +1848,51 @@ export class Highway {
       let flicker = 1
       if (fire > 0 && s.verdict !== 'miss' && !overdue) {
         flicker = 1 + 0.18 * fire * Math.sin(t * 17 + s.note.id * 1.7)
-        this.scratch.lerp(core, 0.26 * fire * fire)
+        this.scratch.lerp(white, 0.26 * fire * fire)
       }
+      // Struck and held notes go the same way, toward the same white — the note
+      // you are playing is that note, lit, not a different-coloured object.
+      if (toWhite > 0) this.scratch.lerp(white, Math.min(1, toWhite))
       // Notes brighten as they approach, so the eye is pulled to what's next.
       const nearness = 1 - Math.max(0, Math.min(1, lead / approachSec))
       this.scratch.multiplyScalar(intensity * (0.5 + 0.5 * nearness) * flicker)
-      this.notes.setColorAt(n, this.scratch)
-      this.glow.setColorAt(n, this.scratch)
 
-      // The strike mark: where you have to press *again*.
-      //
-      // Two notes on one key with no daylight between them draw as a single
-      // unbroken bar — the seam is a line a pixel wide at best, and by the time
-      // it is close enough to see you have already missed the second note. So a
-      // note whose seam is too thin to read gets a disc at its leading edge.
-      // Only until it's judged: once you've played it the mark has done its job,
-      // and leaving it there would clutter the sustain you're still holding.
-      if (marks < MAX_NOTES && z < 0 && !s.verdict && this.gapBefore[i] < approachSec * MARK_GAP) {
-        // Sized in world units as well as lane widths: a two-lane part has
-        // lanes five units wide, and a mark scaled only to the lane would be a
-        // dinner plate. A third of the bar's width, and never more than this,
-        // reads as a marking on the note at any lane count.
-        const w = Math.min(lane.width * WIDTH * 0.28, MARK_MAX_SIZE, visibleLen * 0.5)
-        // Lying on the floor, anything is foreshortened along z — so the disc is
-        // stretched back to read round from where the player is sitting, up to a
-        // point: past about half again it stops being a circle and starts being
-        // a smear down the lane.
-        const len = Math.min(w * 1.45, visibleLen * 0.6)
-        this.dummy.rotation.set(-Math.PI / 2, 0, 0)
-        this.dummy.position.set(
-          this.laneX(lane.center),
-          NOTE_Y + (lane.black ? 0.05 : 0) + NOTE_THICKNESS / 2 + 0.006,
-          z - len / 2
+      if (hasDome && domes < MAX_NOTES) {
+        // Based on the tube's underside, so the dome swallows the near end of
+        // the tube instead of perching on it and leaving a step in the profile
+        // — and driven down from there by the press, which is what makes the
+        // strike read as the note being pushed into the track.
+        this.dummy.rotation.set(0, 0, 0)
+        this.dummy.position.set(x, y - tubeH / 2 - domeH * PRESS_SINK * sink, domeZ - domeLen / 2)
+        // Flattening and splaying together: a struck thing spreads as it gives.
+        this.dummy.scale.set(
+          barW * DOME_W * (1 + PRESS_SPREAD * press),
+          domeH * (1 - PRESS_SQUASH * sink),
+          domeLen * (1 + PRESS_SPREAD * press * 0.5)
         )
-        this.dummy.scale.set(w, len, 1)
         this.dummy.updateMatrix()
-        this.strikeMarks.setMatrixAt(marks, this.dummy.matrix)
-        // Dark, and a fixed fraction of whatever the bar is doing — so it holds
-        // the same contrast whether the bar is dim at the far end, dropped to
-        // 30%, or white-hot in the middle of a combo. Going *lighter* was the
-        // obvious choice and the wrong one: the fire takes the notes to white,
-        // and a pale mark disappears into exactly the streak you most want to
-        // keep. Keeping a trace of the note's own hue stops it reading as a hole
-        // in the bar.
-        this.markInk.copy(this.scratch).lerp(p.mark, 0.72)
-        this.strikeMarks.setColorAt(marks, this.markInk)
-        marks++
+        this.domes.setMatrixAt(domes, this.dummy.matrix)
+        this.domeGlow.setMatrixAt(domes, this.dummy.matrix)
+        this.domes.setColorAt(domes, this.scratch)
+        this.domeGlow.setColorAt(domes, this.scratch)
+        domes++
+      }
+
+      // The tube is the quieter half of a note: it is the tail of something the
+      // dome has already announced. Holding it back also stops a bar of long
+      // notes reading as brighter than a bar of short ones, which is the wrong
+      // way round — the short ones are the busier thing to play.
+      if (tubeLen > 0.02) {
+        this.dummy.rotation.set(0, 0, 0)
+        this.dummy.position.set(x, y, tubeNear - tubeLen / 2)
+        this.dummy.scale.set(tubeW, tubeH, tubeLen)
+        this.dummy.updateMatrix()
+        this.tails.setMatrixAt(tubes, this.dummy.matrix)
+        this.tailGlow.setMatrixAt(tubes, this.dummy.matrix)
+        this.tint.copy(this.scratch).multiplyScalar(tubeShare)
+        this.tails.setColorAt(tubes, this.tint)
+        this.tailGlow.setColorAt(tubes, this.tint)
+        tubes++
       }
 
       // Flames standing up off the note. Vertical and tilted to face the
@@ -1651,41 +1900,89 @@ export class Highway {
       // track, and the thing that makes fire look like fire is that it rises.
       // Two layers — a wide soft one behind a narrow bright one, flickering out
       // of phase — give it depth without a particle system per note.
+      //
+      // They burn off the two shapes, not off the lane. The old bar filled its
+      // lane, so lane-width flames bracketed it; the dome is narrower than that
+      // and the tube much narrower again, and flames still sized to the lane
+      // swallow both instead of licking around them. Each tongue is therefore a
+      // multiple of whatever it is rising from, and the dome gets one of its own
+      // — it is the onset and the biggest mass on the note, so it should be the
+      // part that's alight, not the one bit the fire skips.
       if (fire > 0 && this.flames && s.verdict !== 'miss' && !overdue && !dropped && flameCount < MAX_FLAMES) {
-        const laneW = lane.width * WIDTH
         const hue = lane.black ? p.noteB : p.noteA
-        const segments = Math.max(
-          1,
-          Math.min(MAX_FLAMES_PER_NOTE, Math.round(visibleLen / FLAME_SPACING))
-        )
+        const tubeSegs =
+          tubeLen > 0.02
+            ? Math.max(1, Math.min(MAX_FLAMES_PER_NOTE, Math.round(tubeLen / FLAME_SPACING)))
+            : 0
+        const segments = (hasDome ? 1 : 0) + tubeSegs
         for (let seg = 0; seg < segments && flameCount < MAX_FLAMES; seg++) {
-          // spread evenly along the bar, from its far end to its near end
-          const f01 = segments === 1 ? 0.5 : seg / (segments - 1)
-          const segZ = zFar + visibleLen * f01
+          const onDome = hasDome && seg === 0
+          let segZ: number
+          let baseW: number
+          let baseY: number
+          if (onDome) {
+            segZ = domeZ - domeLen / 2
+            baseW = barW * DOME_W
+            // rooted at the dome's midriff so the flame comes *out* of it rather
+            // than starting at the floor and passing through it
+            baseY = y - tubeH / 2 + domeH * 0.5
+          } else {
+            // spread evenly along the tube, from its far end to where it tucks
+            // under the dome
+            const i = hasDome ? seg - 1 : seg
+            const f01 = tubeSegs === 1 ? 0.5 : i / (tubeSegs - 1)
+            segZ = tubeFar + tubeLen * f01
+            baseW = tubeW
+            baseY = y
+          }
           // alternate a wide soft tongue with a narrow bright one so the run
           // has some variation instead of a row of identical flames
           const outer = seg % 2 === 0
           const phase = s.note.id * 2.3 + seg * 1.9
           const wobble = Math.sin(t * (outer ? 11 : 17) + phase)
-          const h = (outer ? 1.25 : 0.8) * (0.5 + fire * 1.7) * (1 + 0.25 * wobble)
+          const h =
+            (onDome ? 1.3 : 0.95) *
+            (outer ? 1.25 : 0.8) *
+            (0.5 + fire * 1.7) *
+            (1 + 0.25 * wobble)
           this.dummy.rotation.set(tilt, 0, 0)
-          this.dummy.position.set(
-            this.laneX(lane.center) + wobble * 0.07 * laneW,
-            h * 0.42,
-            segZ
-          )
-          this.dummy.scale.set(laneW * (outer ? 1.25 : 0.7), h, 1)
+          // the sway stays tied to the bar rather than to the tongue's own width,
+          // so a thin tube's flames still move as much as a wide dome's
+          this.dummy.position.set(x + wobble * 0.06 * barW, baseY + h * 0.42, segZ)
+          this.dummy.scale.set(baseW * (outer ? FLAME_SPREAD : FLAME_CORE_SPREAD), h, 1)
           this.dummy.updateMatrix()
           this.flames.setMatrixAt(flameCount, this.dummy.matrix)
           this.scratch
             .copy(hue)
-            .lerp(core, outer ? 0.1 : 0.4)
+            .lerp(white, outer ? 0.1 : 0.4)
             .multiplyScalar(fire * (outer ? 0.2 : 0.32) * (0.5 + 0.5 * nearness) * flicker)
           this.flames.setColorAt(flameCount, this.scratch)
           flameCount++
         }
       }
-      n++
+
+      // Letting go, marked in the lane it happened in. Early is the loud one —
+      // a tight yellow flash you can't miss, because it is the only warning you
+      // get that a sustain has stopped paying. A sustain seen out gets the
+      // quieter, wider ring: it is confirmation, not an alarm.
+      if (releasing && rings < MAX_RELEASES) {
+        const k = releaseAge / RELEASE_SEC
+        // World units rather than lane widths, exactly as the hit rings are
+        // sized. A lane is a quarter of the highway on a two-key part and a
+        // twentieth on a full keyboard, and a ring scaled to that is a dot at
+        // one end and an arc across the whole track at the other.
+        const size = 0.5 + k * (letGoEarly ? RELEASE_GROWTH_EARLY : RELEASE_GROWTH_CLEAN)
+        // The release point scrolls from the hit line at the track's own rate,
+        // and the ring hangs off the back of it — centre pushed up the runway by
+        // its own radius, so its near edge *is* that point. See RELEASE_SEC.
+        this.flat(x, 0.06, releaseAge * scroll - size / 2, size, size)
+        this.releases.setMatrixAt(rings, this.dummy.matrix)
+        this.scratch
+          .copy(letGoEarly ? p.dropped : p.held)
+          .multiplyScalar(letGoEarly ? (1 - k) * (1 - k) * 1.5 : (1 - k) * 0.7)
+        this.releases.setColorAt(rings, this.scratch)
+        rings++
+      }
     }
 
     if (this.flames) {
@@ -1693,13 +1990,13 @@ export class Highway {
       uploaded(this.flames)
     }
 
-    this.notes.count = n
-    this.glow.count = n
-    uploaded(this.notes)
-    uploaded(this.glow)
-
-    this.strikeMarks.count = marks
-    uploaded(this.strikeMarks)
+    this.releases.count = rings
+    uploaded(this.releases)
+    this.tails.count = tubes
+    this.tailGlow.count = tubes
+    this.domes.count = domes
+    this.domeGlow.count = domes
+    for (const m of [this.tails, this.tailGlow, this.domes, this.domeGlow]) uploaded(m)
   }
 
   private drawBeats(t: number): void {

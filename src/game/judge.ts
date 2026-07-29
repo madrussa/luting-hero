@@ -111,6 +111,13 @@ export interface NoteState {
   verdict?: Verdict
   /** song time it was hit, for the highway's hit flash */
   hitAtSec?: number
+  /**
+   * Claimed after the Good window, off a note that was still sounding — the
+   * fumble-and-recover the results screen tallies on its own. It rides on the
+   * state as well as on the judgement because the highway marks the release of
+   * one of these and of nothing else, and by then the judgement is long drained.
+   */
+  late?: boolean
   /** long enough that the sustain is scored */
   holdable: boolean
   /** combo multiplier at the onset, reused for the hold bonus */
@@ -119,6 +126,14 @@ export interface NoteState {
   base: number
   /** song time the key currently holding this note went down */
   holdingFrom?: number
+  /**
+   * Song time the hold on this note last ended, for the highway's release
+   * pulse. Only set once the note has actually been held, and overwritten on
+   * every let-go, so a note grabbed and dropped twice pulses twice. Whether the
+   * release was early is not recorded here — that is the note's own end time
+   * against this one, which the renderer already has.
+   */
+  releasedAtSec?: number
   /** seconds of the note actually held down */
   heldSec: number
   /** the sustain is over and its bonus has been paid */
@@ -269,6 +284,7 @@ export class Judge {
 
     s.verdict = verdict
     s.hitAtSec = atSec
+    s.late = late
     s.mult = comboMultiplier(this.stats.combo)
     // The sustain starts from the note's own onset, not from the press: being
     // 30 ms early shouldn't earn extra hold, and being 30 ms late shouldn't
@@ -362,6 +378,10 @@ export class Judge {
     const end = s.note.timeSec + s.note.durSec
     s.heldSec += Math.max(0, Math.min(t, end) - s.holdingFrom)
     s.holdingFrom = undefined
+    // Offset-corrected, unlike `hitAtSec`, because this one is *compared* to the
+    // note's own end rather than only aged against the clock. A player calibrated
+    // 60 ms out would otherwise have every clean finish read as an early drop.
+    s.releasedAtSec = t
   }
 
   /**
